@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# App data and generated telemetry
+live_telemetry_stream/
+*.csv
+
+# ML Models (GitHub blocks files over 100MB, best to ignore them)
+models/
+*.pkl
+*.pt
+
+mlruns/
+data/ 
+
+# Environment variables (secrets/keys)
+.env

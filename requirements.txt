@@ -1,0 +1,12 @@
+# Core Data & Math
+numpy
+pandas
+
+# Machine Learning & Deep Learning
+torch
+scikit-learn
+xgboost
+
+# Dashboard & Visualization
+streamlit
+plotly
