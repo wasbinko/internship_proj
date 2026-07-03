@@ -1,4 +1,4 @@
-# Azercosmos Telemetry ML Pipeline
+# Internship Telemetry ML Pipeline
 
 An end-to-end Machine Learning and monitoring pipeline for processing, modeling, and alerting on telemetry data. This application utilizes Docker for containerization (Kafka), MLflow for model tracking, Streamlit for an interactive dashboard, and a dedicated Python daemon for proactive email alerts.
 
@@ -14,7 +14,7 @@ An end-to-end Machine Learning and monitoring pipeline for processing, modeling,
 ## Project Structure
 
 ```text
-azercosmos_proj/
+Internship_proj/
 ├── alert_daemon.py          # Background service for triggering email alerts
 ├── app/
 │   └── app.py               # Streamlit application for real-time dashboard and deep dives
