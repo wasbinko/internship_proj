@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 import numpy as np
 import pandas as pd
@@ -5,7 +6,7 @@ import torch
 import torch.nn as nn
 from sklearn.preprocessing import RobustScaler
 
-SENSOR_COLS = ["amud", "arnd", "bfo2", "cso1"]
+SENSOR_COLS = ["arnd", "bfo2", "cso1"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -22,14 +23,12 @@ def classify_channel(values: np.ndarray) -> str:
     std = v.std()
     if std < 0.5:                      # cso1: tight noise around a constant
         return "constant"
-    # Distinguish a true random walk (drift) from a bounded periodic oscillation.
-    # A periodic signal (sine) has a sharp peak in its frequency spectrum; a
-    # random walk has diffuse 1/f-like power with no dominant frequency.
     centered = v - v.mean()
     fft = np.abs(np.fft.rfft(centered))
-    fft[0] = 0.0
+    exclude = max(3, int(0.01 * len(fft)))
+    fft[:exclude] = 0.0
     peak_ratio = fft.max() / (fft.mean() + 1e-9)
-    if peak_ratio > 150.0:             # sharp spectral peak → periodic
+    if peak_ratio > 90.0:              # sharp spectral peak → periodic
         return "oscillatory"           # arnd: sine
     return "drift"                     # bfo2: random walk, wanders far
 
@@ -105,15 +104,13 @@ class StatDetector:
         return s.rolling(self.window, min_periods=1).mean().values
 
     def _roll_slope(self, s: pd.Series) -> np.ndarray:
-        # Net directional displacement over the window (sustained trend), not
-        # mean absolute step. A random walk has large per-step noise but small
-        # NET displacement over a window unless there's a real sustained trend
-        # (like a sensor dropping). |value_now - value_window_ago| captures that.
+
         w = self.window
         net = (s - s.shift(w)).abs()
         return net.fillna(0).values
 
     def fit(self, data: np.ndarray, sensors: list[str], ch_types: dict | None = None):
+
         self.sensors = sensors
         df = pd.DataFrame(data, columns=sensors)
         for i, col in enumerate(sensors):
@@ -133,11 +130,6 @@ class StatDetector:
                 st["level_scale"] = _robust_floor(s.std(), s.abs().median())
             elif t == "drift":
                 sl = self._roll_slope(s)
-                # Use a robust HIGH baseline (the normal slope already includes
-                # occasional large random-walk excursions). Calibrate against the
-                # 95th percentile of normal slope, not the mean, so ordinary
-                # random-walk wandering doesn't read as anomalous. Only sustained
-                # moves well beyond normal excursions score high.
                 st["slope_p95"]  = float(np.percentile(sl, 95))
                 st["slope_std"]  = _robust_floor(np.std(sl), np.mean(sl))
                 st["slope_mean"] = float(np.mean(sl))
@@ -176,9 +168,6 @@ class StatDetector:
                 rs = self._roll_std(s)
                 # burst = std well above normal
                 per_ch[:, i] = np.maximum(0, (rs - st["std_mean"]) / st["std_std"])
-        # Ceiling: see STAT_SCORE_CEILING docstring above. Prevents a single
-        # channel with a near-zero calibrated denominator from exploding the
-        # aggregate score into the thousands/millions.
         per_ch = np.minimum(per_ch, STAT_SCORE_CEILING)
         return per_ch.max(axis=1)
 

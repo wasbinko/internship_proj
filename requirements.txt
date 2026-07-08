@@ -1,27 +1,20 @@
-# Core Data & Math
 numpy
 pandas
 
-# Machine Learning & Deep Learning
 torch
 scikit-learn
 xgboost
 
-# NHITS forecaster (optional — Darts needs pytorch-lightning to enable its torch-based models)
 darts
 pytorch-lightning
 
-# Explainability (optional — SHAP for XGBoost, Captum for the forecasters)
 shap
 captum
 
-# Experiment Tracking
 mlflow
 
-# Streaming / Messaging
 kafka-python
 
-# Dashboard & Visualization
 streamlit
 plotly
 streamlit-autorefresh

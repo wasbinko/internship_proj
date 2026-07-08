@@ -32,9 +32,6 @@ def _quiet_trainer_kwargs() -> dict:
 
 
 def build_series(stat_scaled: np.ndarray, sensors: list[str]):
-    """Wrap a (T, C) stationary/scaled array into a Darts multivariate
-    TimeSeries. Uses a plain integer index — no real datetime needed, Darts
-    supports non-time-indexed series directly."""
     df = pd.DataFrame(stat_scaled.astype(np.float32), columns=sensors)
     return TimeSeries.from_dataframe(df)
 

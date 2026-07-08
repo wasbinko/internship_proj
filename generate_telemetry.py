@@ -1,4 +1,3 @@
-
 import os
 import sys
 import time
@@ -16,14 +15,14 @@ INTERVAL_SECONDS = 300  # 5 minutes
 ANOMALY_PROBABILITY = 0.25  # 25% chance to inject an anomaly per file
 
 
-def generate_telemetry_chunk(start_time, num_rows, inject_anomaly=False):
+def generate_telemetry_chunk(start_time, num_rows, inject_anomaly=False,
+                             bfo2_start=50.0, arnd_phase_start=0.0):
     timestamps = [start_time + timedelta(seconds=i) for i in range(num_rows)]
 
     # Nominal baseline generation
-    amud = np.random.choice([0, 1], size=num_rows, p=[0.95, 0.05])
     time_seconds = np.arange(num_rows)
-    arnd = np.sin(time_seconds * 0.1) * 5 + np.random.normal(0, 0.5, num_rows)
-    bfo2 = np.cumsum(np.random.normal(0, 0.2, num_rows)) + 50.0
+    arnd = np.sin((time_seconds + arnd_phase_start) * 0.1) * 5 + np.random.normal(0, 0.5, num_rows)
+    bfo2 = bfo2_start + np.cumsum(np.random.normal(0, 0.2, num_rows))
     cso1 = np.random.normal(12.0, 0.1, num_rows)
 
     anomaly_log = None
@@ -41,9 +40,9 @@ def generate_telemetry_chunk(start_time, num_rows, inject_anomaly=False):
             anomaly_log = f"Frozen Sensor (cso1 stuck at {freeze_value:.2f} for {anom_duration}s)"
 
         elif anomaly_type == "contextual_break":
-            amud[anom_start:anom_end] = 1
+            arnd[anom_start:anom_end] = arnd[anom_start] + np.random.normal(0, 0.1, anom_duration)
             bfo2[anom_start:anom_end] -= np.linspace(0, 10, anom_duration)
-            anomaly_log = f"Contextual Break (amud stuck ON, bfo2 dropping for {anom_duration}s)"
+            anomaly_log = f"Contextual Break (arnd went quiet, bfo2 kept drifting for {anom_duration}s)"
 
         elif anomaly_type == "massive_spike":
             arnd[anom_start:anom_end] += np.random.normal(20, 5, anom_duration)
@@ -51,13 +50,17 @@ def generate_telemetry_chunk(start_time, num_rows, inject_anomaly=False):
 
     df = pd.DataFrame({
         "timestamp": timestamps,
-        "amud": amud,
         "arnd": arnd,
         "bfo2": bfo2,
         "cso1": cso1
     })
 
-    return df, anomaly_log
+    # Continuation state for the next chunk: bfo2's ending level, and arnd's
+    # phase carried forward so the sine wave doesn't visibly "jump" either.
+    next_bfo2_start = float(bfo2[-1])
+    next_arnd_phase_start = float((arnd_phase_start + num_rows) % (2 * np.pi / 0.1))
+
+    return df, anomaly_log, next_bfo2_start, next_arnd_phase_start
 
 
 def parse_args():
@@ -84,7 +87,7 @@ def main():
 
     producer = None
     if use_kafka:
-        from scripts.kafka_io import TelemetryProducer
+        from kafka_io import TelemetryProducer
         try:
             producer = TelemetryProducer(bootstrap_servers=args.kafka_bootstrap,
                                          topic=args.kafka_topic)
@@ -102,12 +105,15 @@ def main():
     print(f"Anomaly Probability: {args.anomaly_probability*100:.0f}% per chunk\n")
 
     try:
+        bfo2_start, arnd_phase_start = 50.0, 0.0
         while True:
             current_time = datetime.now()
             start_time = current_time - timedelta(seconds=args.interval)
 
             is_anomalous = np.random.rand() < args.anomaly_probability
-            df, anomaly_info = generate_telemetry_chunk(start_time, ROWS_PER_FILE, inject_anomaly=is_anomalous)
+            df, anomaly_info, bfo2_start, arnd_phase_start = generate_telemetry_chunk(
+                start_time, ROWS_PER_FILE, inject_anomaly=is_anomalous,
+                bfo2_start=bfo2_start, arnd_phase_start=arnd_phase_start)
 
             timestamp_str = current_time.strftime("%Y%m%d_%H%M%S")
 
@@ -132,7 +138,7 @@ def main():
                   f"Data window: {window_start} -> {window_end} | {' | '.join(dest)}")
 
             if is_anomalous:
-                print(f"!!!!!!!!!!!! ANOMALY INJECTED: {anomaly_info}")
+                print(f"   ANOMALY INJECTED: {anomaly_info}")
 
             time.sleep(args.interval)
 

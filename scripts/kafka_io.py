@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 import json
 import time
@@ -62,9 +60,6 @@ class TelemetryProducer:
         )
 
     def send_chunk(self, df: pd.DataFrame, chunk_timestamp: str, sync: bool = True):
-        """Send one chunk. sync=True blocks until the broker acks (safer for
-        a low-frequency producer where you want to know immediately if the
-        broker is unreachable)."""
         msg = chunk_to_message(df, chunk_timestamp)
         future = self.producer.send(self.topic, key=chunk_timestamp, value=msg)
         if sync:
@@ -126,8 +121,6 @@ class TelemetryConsumer:
         self.consumer.assign(tps)
         end_offsets = self.consumer.end_offsets(tps)
 
-        # Seek each partition back by (roughly) n messages total, split
-        # evenly — fine for the single-partition case this project uses.
         per_partition = max(1, n // len(tps))
         for tp in tps:
             end = end_offsets[tp]
@@ -152,19 +145,12 @@ class TelemetryConsumer:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def chunks_to_dataframe(chunks: list[tuple[str, pd.DataFrame]]) -> Optional[pd.DataFrame]:
-
     if not chunks:
         return None
     chunks_sorted = sorted(chunks, key=lambda c: c[0])   # sort by chunk_timestamp key
     dfs = [df for _, df in chunks_sorted]
     out = pd.concat(dfs, ignore_index=True)
-
-    # Defense-in-depth: even with correct chunk ordering, a producer whose
-    # SYSTEM CLOCK changed between restarts (rare, but possible) could still
-    # produce chunks whose own embedded timestamps aren't in the order their
-    # keys suggest. This doesn't fix that case (nothing can, without a
-    # trustworthy clock) — it just makes it visible instead of silently
-    # scoring on scrambled data again.
+    
     if "timestamp" in out.columns and len(out) > 1:
         ts = pd.to_datetime(out["timestamp"])
         backwards = int((ts.diff().dt.total_seconds() < 0).sum())

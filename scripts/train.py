@@ -17,13 +17,32 @@ from models import (
     rolling_features,
 )
 from drift import build_baseline_snapshot
+# See infer.py for why this tries both import styles.
 try:
     from nhits_model import (train_nhits, score_series as nhits_score_series,
                              calibrate_channel_norm as nhits_calibrate_channel_norm,
                              save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
-except ImportError as e:
-    NHITS_AVAILABLE = False
-    NHITS_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+except ImportError:
+    try:
+        from scripts.nhits_model import (train_nhits, score_series as nhits_score_series,
+                                         calibrate_channel_norm as nhits_calibrate_channel_norm,
+                                         save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
+    except ImportError as e:
+        NHITS_AVAILABLE = False
+        NHITS_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+
+try:
+    from tide_model import (train_tide, score_series as tide_score_series,
+                            calibrate_channel_norm as tide_calibrate_channel_norm,
+                            save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
+except ImportError:
+    try:
+        from scripts.tide_model import (train_tide, score_series as tide_score_series,
+                                        calibrate_channel_norm as tide_calibrate_channel_norm,
+                                        save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
+    except ImportError as e:
+        TIDE_AVAILABLE = False
+        TIDE_IMPORT_ERROR = f"{type(e).__name__}: {e}"
 
 NON_SENSOR = {"timestamp","year","month","day","hour","minute","second",
               "y","label","anomaly","is_anomaly"}
@@ -223,13 +242,15 @@ def main():
     p.add_argument("--sensors", nargs="+", default=None)
     p.add_argument("--models", nargs="+",
                    default=["lstm","patchtst","xgboost","iforest","stat"],
-                   choices=["lstm","patchtst","xgboost","iforest","stat","nhits"],
-                   help="'nhits' is opt-in (not trained by default) -- it's a "
-                        "heavier third-party dependency (Darts + PyTorch "
-                        "Lightning) offering a more sophisticated forecasting "
-                        "architecture as an alternative to the from-scratch "
-                        "LSTM/PatchTST. Same role, same interface, just a "
-                        "fancier engine.")
+                   choices=["lstm","patchtst","xgboost","iforest","stat","nhits","tide"],
+                   help="'nhits' and 'tide' are opt-in (not trained by default) -- "
+                        "both are heavier third-party dependencies (Darts + PyTorch "
+                        "Lightning) offering more sophisticated forecasting "
+                        "architectures as alternatives to the from-scratch "
+                        "LSTM/PatchTST. Same role, same interface, fancier engines. "
+                        "TiDE is the lighter-weight of the two -- an MLP-based "
+                        "architecture that trains faster than NHITS with comparable "
+                        "accuracy on standard benchmarks.")
     p.add_argument("--trim", type=float, default=0.25,
                    help="Fraction of worst-scoring training rows to drop as "
                         "likely-contaminated before final training. 0 = data is clean.")
@@ -255,6 +276,10 @@ def main():
                         "it gets its own epoch count rather than sharing --epochs.")
     p.add_argument("--nhits_stacks", type=int, default=3)
     p.add_argument("--nhits_width", type=int, default=128)
+    p.add_argument("--tide_epochs", type=int, default=25)
+    p.add_argument("--tide_hidden", type=int, default=128)
+    p.add_argument("--tide_encoder_layers", type=int, default=1)
+    p.add_argument("--tide_decoder_layers", type=int, default=1)
     p.add_argument("--force_cpu", action="store_true")
     # MLflow tracking
     p.add_argument("--mlflow", dest="use_mlflow", action="store_true", default=True,
@@ -300,14 +325,6 @@ def main():
 
     raw = df[sensors].values.astype(np.float32)
 
-    # Save a drift-monitoring baseline from the FULL, untrimmed data — same
-    # reasoning as StatDetector's own calibration fix earlier: the baseline
-    # should represent the true nominal distribution, not a forecaster-
-    # trimmed subset (which can itself be a biased, unrepresentative sample
-    # for channels with rare-but-normal events). This baseline has nothing
-    # to do with training the detectors — it exists purely so a later
-    # `check_drift.py` run can tell whether "normal" has quietly changed
-    # since this training run, independent of any single detector's score.
     drift_baseline = build_baseline_snapshot(raw, sensors, ch_types)
     with open(os.path.join(args.model_dir, "drift_baseline.pkl"), "wb") as f:
         pickle.dump(drift_baseline, f)
@@ -426,6 +443,7 @@ def main():
             else:
                 child_ctx = mlflow.start_run(run_name="nhits", nested=True) if mlflow else nullcontext()
                 with child_ctx:
+                    
                     nhits_model = train_nhits(
                         stat_clean_scaled, sensors, window=args.window,
                         epochs=args.nhits_epochs, num_stacks=args.nhits_stacks,
@@ -472,6 +490,69 @@ def main():
                         sc_e_smooth = pd.Series(sc_e).rolling(5, center=True, min_periods=1).median().values
                         pred_e = (sc_e_smooth > thr_p995).astype(int)
                         eval_predictions["nhits"] = pred_e
+                        metrics = evaluate_predictions(pred_e, eval_labels)
+                        print(f"  Eval: P={metrics['precision']:.3f} R={metrics['recall']:.3f} "
+                              f"F1={metrics['f1']:.3f} segments={metrics['segments_caught']}/{metrics['n_segments']}")
+                        if mlflow:
+                            mlflow.log_metrics({f"eval_{k}": v for k, v in metrics.items()})
+
+        # ── TiDE (via Darts) — opt-in, not trained by default ──
+        if "tide" in args.models:
+            print(f"\n{'='*50}\n[TiDE]\n{'='*50}")
+            if not TIDE_AVAILABLE:
+                print(f"  SKIPPED: darts/pytorch-lightning import failed. "
+                      f"Real error: {TIDE_IMPORT_ERROR}. If you've already run "
+                      f"`pip install darts pytorch-lightning`, this is likely a version "
+                      f"mismatch between them and your installed torch.")
+            else:
+                child_ctx = mlflow.start_run(run_name="tide", nested=True) if mlflow else nullcontext()
+                with child_ctx:
+                    tide_model = train_tide(
+                        stat_clean_scaled, sensors, window=args.window,
+                        epochs=args.tide_epochs, hidden_size=args.tide_hidden,
+                        num_encoder_layers=args.tide_encoder_layers,
+                        num_decoder_layers=args.tide_decoder_layers,
+                    )
+                    full_stat_t = make_stationary(raw, sensors, ch_types)
+                    full_scaled_t = scaler.transform(full_stat_t).astype(np.float32)
+                    cn = tide_calibrate_channel_norm(tide_model, full_scaled_t, sensors, args.window)
+                    nom_scores = tide_score_series(tide_model, full_scaled_t, sensors,
+                                                   args.window, cn, agg=args.agg)
+                    nom_smooth = pd.Series(nom_scores).rolling(5, center=True, min_periods=1).median().values
+
+                    log_sc = np.log10(np.maximum(nom_smooth, 1e-9))
+                    log_med, log_mad = float(np.median(log_sc)), float(np.median(np.abs(log_sc - np.median(log_sc))) * 1.4826)
+                    def _robust_log_thr_t(k):
+                        return float(10 ** (log_med + k * log_mad)) if log_mad > 1e-6 else float(np.percentile(nom_smooth, 99.5))
+                    thr_p99, thr_p995, thr_p999 = _robust_log_thr_t(3.0), _robust_log_thr_t(4.5), _robust_log_thr_t(7.0)
+                    print(f"  Nominal score thresholds (full-data, robust): "
+                          f"p99={thr_p99:.2f} p99.5={thr_p995:.2f} p99.9={thr_p999:.2f}")
+                    tide_path = f"{args.model_dir}/tide.pt"
+                    tide_meta_path = f"{args.model_dir}/tide_meta.pkl"
+                    save_tide(tide_model, tide_path)
+                    pickle.dump({**common, "window": args.window, "channel_norm": cn,
+                                "threshold_p99": thr_p99, "threshold_p995": thr_p995,
+                                "threshold_p999": thr_p999, "model_type": "TiDE"},
+                               open(tide_meta_path, "wb"))
+                    saved["tide"] = 1; print("  → saved")
+
+                    if mlflow:
+                        mlflow.log_params({"epochs": args.tide_epochs, "hidden_size": args.tide_hidden,
+                                           "num_encoder_layers": args.tide_encoder_layers,
+                                           "num_decoder_layers": args.tide_decoder_layers,
+                                           "window": args.window, "calibration": "full_untrimmed_robust"})
+                        mlflow.log_metrics({"threshold_p99": thr_p99, "threshold_p995": thr_p995,
+                                            "threshold_p999": thr_p999,
+                                            "nominal_score_median": float(np.median(nom_smooth))})
+                        mlflow.log_artifact(tide_path); mlflow.log_artifact(tide_meta_path)
+
+                    if eval_df is not None:
+                        ds = scaler.transform(make_stationary(
+                            eval_df[sensors].values.astype(np.float32), sensors, ch_types)).astype(np.float32)
+                        sc_e = tide_score_series(tide_model, ds, sensors, args.window, cn, agg=args.agg)
+                        sc_e_smooth = pd.Series(sc_e).rolling(5, center=True, min_periods=1).median().values
+                        pred_e = (sc_e_smooth > thr_p995).astype(int)
+                        eval_predictions["tide"] = pred_e
                         metrics = evaluate_predictions(pred_e, eval_labels)
                         print(f"  Eval: P={metrics['precision']:.3f} R={metrics['recall']:.3f} "
                               f"F1={metrics['f1']:.3f} segments={metrics['segments_caught']}/{metrics['n_segments']}")
@@ -606,16 +687,25 @@ def main():
             with child_ctx:
                 det = IsolationForestDetector(args.if_trees, contamination=0.02)
                 det.fit(stat_clean_scaled, sensors)
-                ns = det.score(stat_clean_scaled)
-                thr995 = float(np.percentile(ns, 99.5))
+
+                full_stat_if = make_stationary(raw, sensors, ch_types)
+                full_scaled_if = scaler.transform(full_stat_if).astype(np.float32)
+                ns = det.score(full_scaled_if)
+                nom_smooth_if = pd.Series(ns).rolling(5, center=True, min_periods=1).median().values
+                thr99, thr995, thr999 = (float(np.percentile(nom_smooth_if, p)) for p in (99, 99.5, 99.9))
+                print(f"  Nominal score thresholds (full-data, percentile): "
+                      f"p99={thr99:.4f} p99.5={thr995:.4f} p99.9={thr999:.4f}")
+
                 if_path = f"{args.model_dir}/iforest.pkl"
-                pickle.dump({**common,"detector":det,"threshold_p995":thr995,
-                             "model_type":"IsolationForest"}, open(if_path,"wb"))
+                pickle.dump({**common,"detector":det,
+                            "threshold_p99":thr99,"threshold_p995":thr995,"threshold_p999":thr999,
+                            "model_type":"IsolationForest"}, open(if_path,"wb"))
                 saved["iforest"]=1; print("  → saved")
 
                 if mlflow:
-                    mlflow.log_params({"if_trees":args.if_trees,"contamination":0.02})
-                    mlflow.log_metric("threshold_p995", thr995)
+                    mlflow.log_params({"if_trees":args.if_trees,"contamination":0.02,
+                                       "calibration":"full_untrimmed_robust"})
+                    mlflow.log_metrics({"threshold_p99":thr99,"threshold_p995":thr995,"threshold_p999":thr999})
                     mlflow.log_artifact(if_path)
 
                 if eval_df is not None:

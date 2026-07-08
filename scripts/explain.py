@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from models import make_stationary, rolling_features
+from scripts.models import make_stationary, rolling_features
 
 
 def rolling_feature_names(sensors: list[str], ch_types: dict,
@@ -36,7 +36,7 @@ def explain_forecaster_row(bundle: dict, raw_data: np.ndarray, row_idx: int,
     sensors  = bundle["sensors"]
     ch_types = bundle.get("ch_types")
     if ch_types is None:
-        from models import classify_channel
+        from scripts.models import classify_channel
         ch_types = {s: classify_channel(raw_data[:, i]) for i, s in enumerate(sensors)}
     scaler   = bundle["scaler"]
     model    = bundle["model"]
@@ -179,7 +179,7 @@ def explain_xgboost_row(bundle: dict, raw_data: np.ndarray, row_idx: int,
     # from the raw data rather than crashing, so this degrades gracefully.
     ch_types = bundle.get("ch_types")
     if ch_types is None:
-        from models import classify_channel
+        from scripts.models import classify_channel
         ch_types = {s: classify_channel(raw_data[:, i]) for i, s in enumerate(sensors)}
     scaler   = bundle["scaler"]
     models   = bundle["models"]
