@@ -113,16 +113,6 @@ def load_data_kafka(bootstrap_servers: str, topic: str, n_chunks: int) -> tuple[
 def get_latest_data_timestamp(source_mode: str, data_dir: str | None = None,
                               kafka_bootstrap: str | None = None,
                               kafka_topic: str | None = None) -> "datetime | None":
-    """
-    Cheaply check the timestamp of the single most recent chunk, without
-    loading the full n_files window. Used to sync auto-run against actual
-    data arrival rather than wall-clock elapsed time -- if auto-run is
-    enabled partway through a 5-minute generation cycle, scheduling off
-    wall-clock time means every future run stays offset from when data
-    actually lands, indefinitely. Scheduling off the data's own timestamps
-    instead means the next run is always measured from when new data
-    genuinely arrived, not from whenever the checkbox happened to be clicked.
-    """
     if source_mode == "Local CSV files":
         if not data_dir:
             return None
@@ -192,26 +182,6 @@ def _regions(pred: np.ndarray, merge_gap: int = 5, max_regions: int = 200):
 
 def build_event_options(pred: np.ndarray, sc: np.ndarray, x, min_row: int = 0,
                         min_duration: int = 2, max_events: int = 15) -> list[dict]:
-    """
-    Group a prediction array's flagged points into distinct anomaly EVENTS
-    (contiguous regions, same merging logic as the shading), instead of
-    offering a flat list of arbitrary sampled timestamps. Each event's
-    "peak" row (its highest score) is picked as the default point to
-    explain — the most representative moment of that event — so choosing
-    an event is enough on its own; no need to hunt for a specific second.
-
-    Two extra filters keep this genuinely usable even for a noisy per-model
-    threshold (some individual models can flag hundreds of scattered
-    single-second blips): events shorter than min_duration are dropped
-    (single-second flickers are rarely worth an individual explanation),
-    and the list is capped at max_events, keeping the highest-scoring
-    (most severe) events if there are more than that — but still shown in
-    chronological order, so the time context stays intact.
-
-    min_row filters out events whose peak falls before enough history
-    exists to explain it (needed for the forecasters, which need a full
-    lookback window before a prediction can be made at all).
-    """
     candidates = []
     for s, e in _regions(pred):
         if (e - s) < min_duration:
@@ -241,11 +211,6 @@ def build_event_options(pred: np.ndarray, sc: np.ndarray, x, min_row: int = 0,
         candidates = candidates[:max_events]
     candidates.sort(key=lambda c: c[0])   # back to chronological order for display
 
-    # Check the dtype of the x-axis array itself, not hasattr(value, "strftime") —
-    # numpy.datetime64 scalars (what df["timestamp"].values actually produces)
-    # never have a .strftime() method, only pandas.Timestamp does, so that
-    # check was silently false even when real timestamps were available and
-    # always fell through to showing raw row numbers instead of times.
     x_arr = np.asarray(x)
     is_datetime = np.issubdtype(x_arr.dtype, np.datetime64)
 
@@ -265,13 +230,6 @@ def build_event_options(pred: np.ndarray, sc: np.ndarray, x, min_row: int = 0,
 
 
 def render_event_navigator(events: list[dict], key: str) -> dict:
-    """
-    Step through anomaly events one at a time with Previous/Next buttons,
-    instead of a dropdown you have to click open and scroll through every
-    time. Position is remembered per-panel (via `key`) across reruns, and
-    clamped automatically if the event list changes size (e.g. after a
-    fresh Run produces fewer or more events than before).
-    """
     state_key = f"event_nav_{key}"
     idx = st.session_state.get(state_key, 0)
     idx = max(0, min(idx, len(events) - 1))
@@ -341,13 +299,12 @@ if "run_config" not in st.session_state:
 # TABS
 # ─────────────────────────────────────────────────────────────────────────────
 
-tab_cfg, tab_results, tab_deep, tab_compare, tab_health, tab_info = st.tabs([
+tab_cfg, tab_results, tab_deep, tab_compare, tab_health = st.tabs([
     "Configure & Run",
     "Results",
     "Deep Dive",
     "Model Comparison",
     "Data Health",
-    "Info",
 ])
 
 
@@ -386,16 +343,8 @@ with tab_cfg:
                 st.info(f"Auto-run is ON, synced to incoming data — {file_note}. "
                        f"Status detail appears above the Run button below.")
 
-        # This same script reruns every 30s WHILE auto-run is enabled -- that's
-        # just how often we CHECK the clock, not how often analysis actually
-        # runs. The real run only fires when auto_run_minutes have genuinely
-        # elapsed (or on the very first check after enabling), tracked via a
-        # timestamp in session_state so it survives across these reruns.
         if auto_run_enabled:
             st_autorefresh(interval=5_000, key="auto_run_ticker")
-
-    # Always defined, regardless of package availability or enabled state,
-    # so the file-count sliders below can safely reference it either way.
     n_files_for_interval = max(1, int(auto_run_minutes) // 5)
 
     st.divider()
@@ -624,22 +573,6 @@ with tab_cfg:
         disabled=run_disabled,
         width='stretch',
     )
-
-    # Auto-run fires the exact same analysis block below as a manual click --
-    # same code path, same validation, nothing auto-run-specific to keep in
-    # sync separately. Respects the same readiness gate as the button (won't
-    # fire if no models are selected / data isn't ready).
-    #
-    # Scheduling is synced to the DATA's own timestamps, not wall-clock time
-    # elapsed since the checkbox was clicked. If auto-run gets enabled two
-    # minutes into a 5-minute generation cycle, wall-clock scheduling would
-    # stay offset from actual data arrival forever after -- every future run
-    # still lands a couple minutes late relative to when new data showed up,
-    # which is exactly the gap between what the dashboard shows and what the
-    # email alert (triggered the moment new data lands) already reported.
-    # Measuring the interval in DATA time instead means a run only fires once
-    # genuinely new data has arrived, regardless of when the checkbox was
-    # first checked.
     auto_run_triggered = False
     if AUTOREFRESH_AVAILABLE and auto_run_enabled and not run_disabled:
         latest_data_ts = get_latest_data_timestamp(
@@ -675,16 +608,6 @@ with tab_cfg:
         with st.status("Running analysis...", expanded=True) as status:
             # Load data
             st.write("Loading telemetry data...")
-            # Fetch one extra chunk beyond what's requested, purely as lookback
-            # context for the forecasters. Every fresh "last N chunks" load
-            # otherwise starts with zero history, so the first `window` seconds
-            # of forecaster predictions are a meaningless back-filled
-            # placeholder -- not because no real history exists (the stream
-            # has been running for a while), but because the app discarded it
-            # by only fetching exactly what's displayed. This extra chunk is
-            # scored for context and then trimmed back off below, before
-            # anything gets displayed -- so the model has genuine history for
-            # every point actually shown, not just the ones after row ~60.
             fetch_n_files = n_files + 1
             if source_mode == "Local CSV files":
                 df = load_data(data_dir, fetch_n_files)
@@ -725,61 +648,13 @@ with tab_cfg:
             elapsed = time.time() - t0
             st.write(f"   → Done in {elapsed:.2f}s")
 
-            # Trim the lookback chunk back off now that scoring is done. Every
-            # model's prediction for the remaining, displayed window now has
-            # genuine history behind it -- the warm-up blind spot is gone for
-            # everything actually shown, not just masked/hidden on the chart.
-            # Uses the project's fixed 300-rows-per-chunk convention rather
-            # than deriving it from len(df)/fetch_n_files, which would be
-            # wrong if fewer chunks existed than requested (e.g. very early
-            # in a session) -- in that case there's no genuine extra chunk to
-            # trim, and doing so anyway would cut into data the user actually
-            # asked to see.
             ROWS_PER_CHUNK = 300
+            trim_rows = 0
             if len(df) > n_files * ROWS_PER_CHUNK:
                 trim_rows = len(df) - n_files * ROWS_PER_CHUNK
                 df = df.iloc[trim_rows:].reset_index(drop=True)
                 data_arr = data_arr[trim_rows:]
                 all_scores = {k: v[trim_rows:] for k, v in all_scores.items()}
-
-            # Compute thresholds and predictions with three false-alarm protections:
-            #
-            # 1. Score smoothing (rolling median) — kills single-second noise spikes
-            #    before thresholding without affecting sustained anomaly regions.
-            #
-            # 2. Log-space thresholding — scores span many orders of magnitude.
-            #    IQR/MAD on raw scores is dominated by the bulk of near-zero normal
-            #    scores; doing it in log-space gives equal weight to all decades and
-            #    produces a much more stable threshold that doesn't drift up when
-            #    big anomalies are present.
-            #
-            # 3. Minimum duration filter — discard any flagged run shorter than
-            #    min_duration seconds. Your generator injects 30–90s anomalies, so
-            #    anything shorter than ~10s is almost certainly noise.
-
-            # Compute thresholds and predictions with false-alarm protections:
-            #
-            # 1. Score smoothing (rolling median) — kills single-second noise spikes.
-            #
-            # 2. Model-aware thresholding:
-            #    - StatDetector outputs LINEAR z-scores (median + k·MAD directly,
-            #      since the score already means "std devs from normal").
-            #    - Forecasting/tree models span orders of magnitude, so they use
-            #      LOG-space thresholding, robust to degenerate near-zero scores.
-            #
-            # 3. Minimum duration filter — discard flagged runs shorter than
-            #    min_duration seconds.
-            #
-            # 4. SMART CONSENSUS ("consensus" pseudo-model): StatDetector is the
-            #    primary recall driver (it alone catches frozen sensors, which
-            #    forecasters are structurally blind to), but used alone it has
-            #    too many false positives from natural random-walk noise. The
-            #    fix, validated on a labeled test set: confirm an anomaly when
-            #    EITHER (a) StatDetector's score is strongly elevated on its own,
-            #    OR (b) StatDetector is weakly elevated AND at least one
-            #    forecasting model agrees. This combination measured F1=0.74 vs
-            #    F1=0.68 for StatDetector alone and far below that for any single
-            #    forecaster (which miss frozen sensors completely).
 
             LINEAR_SCORE_MODELS = {"stat"}
 
@@ -824,23 +699,6 @@ with tab_cfg:
                 return out
 
             def _warmup_length(model_name: str) -> int:
-                """
-                How many rows at the start of ANY scored batch have no real
-                signal yet -- just a back-filled placeholder from having
-                insufficient history. Every downstream use of a model's
-                prediction (its own panel, AND the Smart Consensus
-                computation) needs to mask this region out, or a merely
-                elevated placeholder value can get flagged as a detection
-                purely because it happens to sit above threshold, which is
-                an artifact of having no data yet, not a real anomaly.
-
-                Forecasters (lstm/patchtst/nhits/xgboost) expose this
-                directly as bundle["window"]. StatDetector does NOT --
-                its rolling window lives on the detector OBJECT
-                (bundle["detector"].window), not as a top-level bundle key,
-                so a plain bundle.get("window") silently returns None for it
-                and its warm-up was never masked anywhere until this fix.
-                """
                 b = active_bundles.get(model_name, {})
                 if "window" in b:
                     return int(b["window"])
@@ -856,16 +714,6 @@ with tab_cfg:
             for name, sc in all_scores.items():
                 sc_smooth = _smooth(sc, score_smoothing)
                 if name in LINEAR_SCORE_MODELS:
-                    # StatDetector: use the STABLE nominal median/MAD saved at
-                    # training time (fixes the original bug: a live median/MAD
-                    # computed on whatever window is currently loaded collapses
-                    # when the elevated state occupies anywhere close to half
-                    # the window — verified: at ~54% elevated the threshold
-                    # exceeded the max observed score, so nothing was ever
-                    # flagged), BUT still scale by the LIVE k_val slider
-                    # (fixes a regression: hardcoding 3 fixed precomputed
-                    # threshold values ignored the slider entirely and could
-                    # land far too low for a given deployment's actual scale).
                     saved_bundle = active_bundles.get(name, {})
                     saved_thr = None
                     if "nominal_median" in saved_bundle and "nominal_mad" in saved_bundle:
@@ -878,13 +726,6 @@ with tab_cfg:
                         thr = _linear_threshold(sc_smooth, k_val)
                         threshold_basis[name] = "live (linear, no saved threshold — retrain to fix)"
                 else:
-                    # Prefer the threshold calibrated on clean nominal data at
-                    # training time. This is robust to rare single-point
-                    # forecasting noise spikes that otherwise inflate a live
-                    # log-MAD threshold computed on whatever window the user
-                    # happens to be viewing. Pick p99 / p99.5 / p99.9 based on
-                    # the k slider: k<=4 -> p99 (sensitive), k<=8 -> p99.5
-                    # (default), else p99.9 (strict).
                     saved_bundle = active_bundles.get(name, {})
                     saved_thr = None
                     if "threshold_p995" in saved_bundle:
@@ -902,17 +743,6 @@ with tab_cfg:
                         threshold_basis[name] = "live (log-MAD, no saved threshold — retrain to fix)"
                 pred = (sc_smooth > thr).astype(int)
 
-                # The first `window` rows of any forecaster (lstm/patchtst/
-                # nhits) have no real prediction yet -- there isn't enough
-                # history for the model to forecast from. Scoring code fills
-                # this warm-up region with a copy of the first genuine score
-                # (standard back-fill), which means if that first real score
-                # happens to be elevated, the ENTIRE flat warm-up block
-                # inherits it and can spuriously cross the threshold -- a
-                # constant flagged region at the very start of every chart
-                # that isn't a real detection, just an artifact of having no
-                # signal yet. Mask it out explicitly rather than trusting
-                # whatever value got filled in.
                 win = _warmup_length(name)
                 if win:
                     pred[:min(win, len(pred))] = 0
@@ -922,9 +752,7 @@ with tab_cfg:
                 predictions[name]     = pred
                 smoothed_scores[name] = sc_smooth
 
-            # Smart consensus. Computed whenever at least one forecaster is
-            # selected, since the forecaster-agreement path (added below) is
-            # useful even without StatDetector.
+
             forecaster_names = [n for n in ("lstm", "patchtst", "nhits", "xgboost") if n in predictions]
             min_forecaster_agree = 2
 
@@ -940,13 +768,6 @@ with tab_cfg:
 
                 if "stat" in smoothed_scores and use_smart_consensus:
                     stat_sc = smoothed_scores["stat"]
-                    # Same fix as the per-model threshold above: use the
-                    # STABLE nominal median/MAD saved at training time (fixes
-                    # the collapse when the live window is heavily
-                    # anomalous), but still scale by the live k_val slider
-                    # (fixes a regression where hardcoding fixed precomputed
-                    # threshold values ignored the slider and could sit far
-                    # too low or high for a given deployment's actual scale).
                     saved_stat = active_bundles.get("stat", {})
                     if "nominal_median" in saved_stat and "nominal_mad" in saved_stat:
                         nm, nmad = saved_stat["nominal_median"], saved_stat["nominal_mad"]
@@ -961,15 +782,6 @@ with tab_cfg:
                         stat_weak_thr   = _linear_threshold(stat_sc, max(1.0, k_val * 0.6))
                     stat_strong = (stat_sc > stat_strong_thr).astype(int)
                     stat_weak   = (stat_sc > stat_weak_thr).astype(int)
-
-                    # This is the gap that let warm-up artifacts through even
-                    # when each model's OWN panel was correctly masked: this
-                    # block computes stat_strong/stat_weak fresh from the raw
-                    # smoothed score, not from the already-masked
-                    # predictions["stat"] array, so StatDetector's warm-up
-                    # region (which never had a bundle-level "window" key,
-                    # unlike the forecasters) fed unmasked signal directly
-                    # into the consensus regardless of any per-panel masking.
                     stat_win = _warmup_length("stat")
                     if stat_win:
                         stat_strong[:min(stat_win, len(stat_strong))] = 0
@@ -978,32 +790,14 @@ with tab_cfg:
                     display_basis = stat_sc
                     display_thr   = stat_strong_thr
                 else:
-                    # StatDetector unavailable or disabled — frozen-sensor
-                    # coverage is lost, but forecaster-strong-agreement still
-                    # confirms spike/contextual anomalies on its own.
                     stat_strong = np.zeros(len(df), dtype=int)
                     stat_weak   = np.zeros(len(df), dtype=int)
                     display_basis = (fc_vote.astype(np.float32) if forecaster_names
                                      else np.zeros(len(df), dtype=np.float32))
                     display_thr   = float(min_forecaster_agree)
-
-                # Confirmed when: StatDetector strongly elevated alone, OR
-                # StatDetector weakly elevated and backed by any forecaster, OR
-                # at least `min_forecaster_agree` forecasters agree regardless
-                # of StatDetector (added because forecasters are independently
-                # reliable on spike/contextual anomalies — requiring
-                # StatDetector's permission for those silently dropped real
-                # detections it simply doesn't react to).
                 consensus_pred = np.maximum(stat_strong, stat_weak & fc_any_agree)
                 consensus_pred = np.maximum(consensus_pred, fc_strong_agree)
                 consensus_pred = _apply_min_duration(consensus_pred, min_duration)
-
-                # Track WHICH path confirmed each timestep, so "why was this
-                # shaded as confirmed?" always has a direct, checkable answer
-                # instead of requiring a manual investigation every time.
-                # 1 = StatDetector alone was strongly elevated
-                # 2 = StatDetector only weakly elevated, backed by 1 forecaster
-                # 3 = 2+ forecasters agreed, independent of StatDetector
                 consensus_reason = np.zeros(len(consensus_pred), dtype=np.int8)
                 consensus_reason[(stat_weak.astype(bool)) & (fc_any_agree.astype(bool))] = 2
                 consensus_reason[fc_strong_agree.astype(bool)] = 3
@@ -1028,6 +822,7 @@ with tab_cfg:
                 "consensus_weak_thr": stat_weak_thr if "stat" in smoothed_scores and use_smart_consensus else None,
                 "consensus_reason": consensus_reason if "consensus" in predictions else None,
                 "consensus_forecaster_names": forecaster_names if "consensus" in predictions else [],
+                "warmup_already_trimmed": trim_rows > 0,
             }
             st.session_state["run_config"] = {
                 "data_dir": data_dir, "model_dir": model_dir,
@@ -1146,24 +941,29 @@ with tab_results:
                               "threshold calibrated on clean nominal data.")
 
                 fig2 = go.Figure()
-                # The first `window` rows have no real prediction yet -- the
-                # score there is a back-filled placeholder (see the warm-up
-                # masking note below), not a genuine reading. It's already
-                # excluded from ever being flagged, but the chart was still
-                # drawing it as a flat line, which reads as a real
-                # measurement when it isn't one. Blank it out here so the
-                # chart shows an honest gap instead -- this is display-only,
-                # sc itself (used for Max/Median score and thresholding)
-                # is untouched.
+
                 sc_display = sc.copy()
-                warm_bundle = r["bundles"].get(name, {})
-                warm_len = warm_bundle.get("window")
-                if warm_len is None:
-                    warm_det = warm_bundle.get("detector")
-                    if warm_det is not None and hasattr(warm_det, "window"):
-                        warm_len = warm_det.window
-                if warm_len:
-                    sc_display[:min(int(warm_len), len(sc_display))] = np.nan
+                if not r.get("warmup_already_trimmed", False):
+                    if name == "consensus":
+                        warm_lens = []
+                        for bname, b in r["bundles"].items():
+                            wl = b.get("window")
+                            if wl is None:
+                                wdet = b.get("detector")
+                                if wdet is not None and hasattr(wdet, "window"):
+                                    wl = wdet.window
+                            if wl:
+                                warm_lens.append(int(wl))
+                        warm_len = max(warm_lens) if warm_lens else None
+                    else:
+                        warm_bundle = r["bundles"].get(name, {})
+                        warm_len = warm_bundle.get("window")
+                        if warm_len is None:
+                            warm_det = warm_bundle.get("detector")
+                            if warm_det is not None and hasattr(warm_det, "window"):
+                                warm_len = warm_det.window
+                    if warm_len:
+                        sc_display[:min(int(warm_len), len(sc_display))] = np.nan
                 fig2.add_trace(go.Scatter(
                     x=x, y=sc_display, name="Score",
                     fill="tozeroy",
@@ -1175,15 +975,6 @@ with tab_results:
                                annotation_text=f"Threshold ({thr:.4f})",
                                annotation_position="top right")
 
-                # The Confirmed panel specifically can shade a region for
-                # reasons that have NOTHING to do with this displayed score
-                # crossing the line above -- e.g. two forecasters agreeing
-                # independently of StatDetector, or StatDetector crossing a
-                # much lower "weak" threshold that isn't shown by default.
-                # Showing only the strong threshold line implied "shading
-                # means this line was crossed," which is only true for one
-                # of three paths and was a real source of confusion. Show
-                # the weak line too, and say so explicitly.
                 if name == "consensus":
                     weak_thr_display = r.get("consensus_weak_thr")
                     if weak_thr_display is not None:
@@ -1191,9 +982,6 @@ with tab_results:
                                        annotation_text=f"Weak threshold ({weak_thr_display:.4f})",
                                        annotation_position="bottom right")
 
-                # Bound the y-axis a few decades above the threshold/max signal
-                # instead of letting Plotly auto-scale to a rare extreme outlier
-                # (which compresses the real signal into an unreadable sliver).
                 visible_max = max(thr, float(np.percentile(sc, 99.9))) * 3
                 visible_min = max(1e-3, float(np.percentile(sc[sc > 0], 1)) * 0.3) if (sc > 0).any() else 1e-3
                 fig2.update_layout(
@@ -1209,11 +997,6 @@ with tab_results:
                 c2.metric("Median score", f"{np.median(sc):.6f}")
                 c3.metric("Threshold",    f"{thr:.4f}")
 
-                # Confirmed-specific transparency: exactly which of the three
-                # consensus paths fired for each event, and which individual
-                # models actually agreed — so "why was this shaded?" always
-                # has a direct, checkable answer in the app itself instead of
-                # requiring a manual investigation every time it comes up.
                 if name == "consensus" and pred.sum() > 0:
                     st.divider()
                     st.markdown("**Why was this confirmed?**")
@@ -1258,12 +1041,7 @@ with tab_results:
                         else:
                             st.caption("No distinct confirmed events to explain here.")
 
-                # SHAP explainability — only meaningful for XGBoost. TreeExplainer
-                # gives fast, exact feature attributions for tree models; the
-                # forecasters would need a slower, approximate explainer for
-                # noisier results, and StatDetector's logic is already fully
-                # transparent by construction (each channel's z-score explains
-                # itself). So this is offered only here, where it's cheap and exact.
+                
                 if name == "xgboost" and pred.sum() > 0:
                     st.divider()
                     st.markdown("**Why was this flagged?**")
@@ -1328,12 +1106,6 @@ with tab_results:
                                           f"{result['predicted']:.2f} → {result['actual']:.2f}")
                                 dc3.metric("Normalised error", f"{result['error']:.2f}")
 
-                # Captum explainability — for the forecasters (LSTM, PatchTST).
-                # These take a whole WINDOW of the past as input, not a flat
-                # feature vector, so explaining a prediction means attributing
-                # across time AND channel simultaneously — a heatmap, not a
-                # bar chart. Integrated Gradients handles this the same way
-                # regardless of input shape.
                 if name in ("lstm", "patchtst") and pred.sum() > 0:
                     st.divider()
                     st.markdown("**Why was this flagged?**")
@@ -1428,9 +1200,7 @@ with tab_deep:
             for atype, (label, desc) in ANOMALY_TYPE_INFO.items():
                 st.markdown(f"**{label}** — {desc}")
 
-        # Build a single "any model flagged" overlay so we don't stack
-        # thousands of shapes (4 channels × 4 models). One consensus band
-        # per channel keeps the chart readable and fast.
+
         non_ens_preds = [np.asarray(p).ravel() for k, p in predictions_d.items() if k != "ensemble"]
         if non_ens_preds:
             any_flag = np.clip(np.sum(non_ens_preds, axis=0), 0, 1).astype(int)
@@ -1447,9 +1217,6 @@ with tab_deep:
                 row=i, col=1,
             )
 
-        # Add shaded regions as raw shape dicts in ONE update_layout call.
-        # add_vrect(row=,col=) is O(subplots) per call and stalls with many
-        # regions; building shapes directly with explicit axis refs is instant.
         shapes = []
         for i in range(1, n_ch + 1):
             xref = "x" if i == 1 else f"x{i}"
@@ -1574,13 +1341,6 @@ with tab_compare:
 # TAB — Data Health (drift monitoring)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_health:
-    # Imported unconditionally at the top of the tab, not inside the button
-    # handler below — the results section further down runs on ANY rerun
-    # where a previous check is cached in session_state, even if the button
-    # wasn't clicked this run (Streamlit reruns the whole script on every
-    # interaction). Importing only inside the button block meant these names
-    # were undefined whenever that section ran without the button firing,
-    # causing an intermittent NameError.
     from drift import (check_drift, overall_drift_status,
                        PSI_STABLE_THRESHOLD, PSI_MODERATE_THRESHOLD)
 
@@ -1686,110 +1446,3 @@ with tab_health:
                   f"moderate < {PSI_MODERATE_THRESHOLD}, significant \u2265 {PSI_MODERATE_THRESHOLD}.")
 
 
-with tab_info:
-    r = st.session_state.get("results")
-
-    st.subheader("Model Info & Quick-Start")
-
-    with st.expander("Loaded model details", expanded=bool(r)):
-        if r:
-            for name, b in r["bundles"].items():
-                st.markdown(f"**{MODEL_LABELS.get(name, name)}**")
-                safe = {k: (v.tolist() if hasattr(v,"tolist") else str(v) if not isinstance(v,(str,int,float,bool,list,dict,type(None))) else v)
-                        for k,v in b.items()
-                        if k not in ("model","scaler","detector","models","channel_norm")}
-                if "channel_norm" in b and "sensors" in b:
-                    safe["channel_norm"] = dict(zip(b["sensors"], b["channel_norm"].round(5).tolist()))
-                st.json(safe)
-        else:
-            st.info("Run an analysis to see loaded model details.")
-
-    with st.expander("Quick-Start", expanded=not bool(r)):
-        st.markdown("""
-        ```bash
-        # 1. Generate telemetry (keep running in background)
-        python generate_telemetry.py
-
-        # 2. Train all models (after a few chunks exist)
-        python scripts/train.py --data_dir live_telemetry_stream --model_dir models --trim 0.25
-
-        # 3. Open this dashboard
-        streamlit run app/app.py
-        ```
-        Then go to Configure & Run, select your models, and click Run Analysis.
-
-        Use `--trim 0.0` instead of `--trim 0.25` if you generated data with the
-        generator's anomaly injection disabled, so the training set is already clean.
-        """)
-
-    with st.expander("Architecture overview", expanded=not bool(r)):
-        st.markdown("""
-        Five detectors are available, each producing a per-timestep anomaly score:
-
-        **StatDetector** is the primary recall driver. It classifies every channel
-        (binary, near-constant, drifting, or oscillatory) and applies explicit,
-        interpretable logic per type — variance collapse for frozen sensors,
-        activation-rate spikes for stuck binaries, sustained trend breaks for
-        drifting channels, variance bursts for oscillating channels. It is the
-        only detector that reliably catches frozen-sensor anomalies, because a
-        frozen value is trivially easy for a forecaster to predict and therefore
-        produces almost no forecast error.
-
-        **LSTM Forecaster, PatchTST, and XGBoost** all predict the next timestep
-        from a rolling window and score by prediction error. They catch
-        contextual breaks and sudden spikes well, but share the same structural
-        blind spot on frozen sensors.
-
-        **Isolation Forest** scores how easily a point is isolated in feature
-        space — a general unsupervised baseline.
-
-        **Smart Consensus** combines StatDetector with whichever forecasters are
-        selected: it confirms an anomaly when StatDetector's signal is strongly
-        elevated on its own, or weakly elevated and backed by agreement from at
-        least one forecaster. This combination has measurably better precision
-        and recall than any single detector and is the recommended primary
-        signal — shown as the "Confirmed" row when enabled.
-        """)
-
-    with st.expander("Models"):
-        for name in MODEL_LABELS:
-            if name in ("ensemble", "consensus"):
-                continue
-            color = MODEL_COLORS[name]
-            st.markdown(
-                f"<b style='color:{color}'>{MODEL_LABELS[name]}</b><br>",
-                unsafe_allow_html=True,
-            )
-
-    with st.expander("Anomaly types (from your generator)"):
-        for atype, (label, desc) in ANOMALY_TYPE_INFO.items():
-            st.markdown(f"**{label}** — {desc}")
-
-    with st.expander("Threshold calibration"):
-        st.markdown("""
-        Two different threshold strategies are used depending on the model's score shape:
-
-        **StatDetector** scores are already normalised z-scores — the threshold
-        is computed directly in linear space as median + k·MAD, where k is
-        literally a multiple of standard deviations from normal.
-
-        **LSTM, PatchTST, and XGBoost** scores span orders of magnitude and
-        contain rare, harmless single-point forecast noise spikes that can
-        distort a threshold computed live from whatever data is loaded. To
-        avoid this, `train.py` calibrates and saves a threshold (p99, p99.5,
-        p99.9) on a large clean nominal sample at training time. The app uses
-        this saved threshold whenever available, mapped from the Threshold k
-        slider: k ≤ 4 uses p99, k ≤ 8 uses p99.5, otherwise p99.9. If a saved
-        threshold isn't found, the app falls back to a live log-MAD
-        computation and shows a warning — retrain to remove it.
-
-        | Method | Formula | Notes |
-        |---|---|---|
-        | MAD | median + k·1.4826·MAD | Default for forecaster/tree models, computed in log-space |
-        | IQR | median + k·(Q3−Q1) | Alternative for skewed distributions |
-        | Pct | top k-th percentile | Direct percentile cutoff |
-
-        Lower k means more sensitive detection. Score smoothing (rolling
-        median) and minimum anomaly duration are applied before thresholding
-        and after, respectively, to suppress isolated single-second noise.
-        """)

@@ -18,6 +18,7 @@ models/
 
 mlruns/
 data/ 
+drift_demo_data/
 
 # Environment variables (secrets/keys)
 .env

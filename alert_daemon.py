@@ -44,7 +44,7 @@ KAFKA_GROUP_ID  = "alert-daemon"   # persistent consumer group — offsets survi
 
 # Email settings
 EMAIL_SENDER   = "wasbfifa228@gmail.com"
-EMAIL_PASSWORD = "XXXXXXXXXXXXXXX"     # use an App Password, never a real password
+EMAIL_PASSWORD = "ifut trhq sfjn mnad"     # use an App Password, never a real password
 EMAIL_RECEIVER = "mammadovn228@gmail.com"
 
 # Models to run

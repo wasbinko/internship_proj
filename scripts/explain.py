@@ -36,7 +36,7 @@ def explain_forecaster_row(bundle: dict, raw_data: np.ndarray, row_idx: int,
     sensors  = bundle["sensors"]
     ch_types = bundle.get("ch_types")
     if ch_types is None:
-        from scripts.models import classify_channel
+        from models import classify_channel
         ch_types = {s: classify_channel(raw_data[:, i]) for i, s in enumerate(sensors)}
     scaler   = bundle["scaler"]
     model    = bundle["model"]
@@ -179,7 +179,7 @@ def explain_xgboost_row(bundle: dict, raw_data: np.ndarray, row_idx: int,
     # from the raw data rather than crashing, so this degrades gracefully.
     ch_types = bundle.get("ch_types")
     if ch_types is None:
-        from scripts.models import classify_channel
+        from models import classify_channel
         ch_types = {s: classify_channel(raw_data[:, i]) for i, s in enumerate(sensors)}
     scaler   = bundle["scaler"]
     models   = bundle["models"]
