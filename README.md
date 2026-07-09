@@ -19,8 +19,6 @@ Internship_proj/
 ├── daemon_gui.py            # Desktop GUI wrapper for starting/stopping the alert daemon
 ├── train_gui.py             # Desktop GUI wrapper for training models
 ├── simulate_drift.py        # Generates deliberately drifted data to demo the Data Health tab
-├── check_model_sensors.py   # Quick check of which sensors a saved model expects
-├── diagnose_stat_v2.py      # StatDetector diagnostics with a per-channel score breakdown
 ├── app/
 │   └── app.py               # Streamlit application for real-time dashboard and deep dives
 ├── docker-compose.yml       # Docker orchestration for Kafka
@@ -32,11 +30,8 @@ Internship_proj/
     ├── explain.py             # Model explainability (SHAP for XGBoost, Captum for forecasters)
     ├── infer.py                # Runs model inference and scoring on incoming data
     ├── kafka_io.py              # Handles Kafka producers/consumers for data streams
-    ├── kafka_peek.py             # Utility to inspect recent messages on a Kafka topic
-    ├── make_labeled_data.py      # Builds a labeled test set for measuring detection quality
     ├── models.py                 # ML model definitions (LSTM, PatchTST, XGBoost, IF, StatDetector)
     ├── nhits_model.py             # NHITS forecasting model (via Darts) — optional detector
-    ├── tide_model.py               # TiDE forecasting model (via Darts) — optional, lighter-weight detector
     └── train.py                    # Model training, MLflow logging, and drift baseline snapshotting
 
 ```

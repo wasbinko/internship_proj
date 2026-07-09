@@ -81,7 +81,7 @@ def main():
 
     # Run the actual check right now too, so you know what to expect before
     # even opening the app.
-    from drift import check_drift, overall_drift_status
+    from scripts.drift import check_drift, overall_drift_status
     all_files = sorted(glob.glob(os.path.join(args.output_dir, "*.csv")))
     full_df = pd.concat([pd.read_csv(f) for f in all_files], ignore_index=True)
     sensors = baseline["sensors"]

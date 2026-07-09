@@ -12,24 +12,18 @@ except ImportError:
 
 
 MODEL_OPTIONS = [
-    ("stat",     "StatDetector",           True),
-    ("lstm",     "LSTM",                   True),
-    ("patchtst", "PatchTST",               True),
-    ("xgboost",  "XGBoost",                True),
-    ("iforest",  "Isolation Forest",       True),
+    ("stat",     "StatDetector",           False),
+    ("lstm",     "LSTM",                   False),
+    ("patchtst", "PatchTST",               False),
+    ("xgboost",  "XGBoost",                False),
+    ("iforest",  "Isolation Forest",       False),
     ("nhits",    "NHITS (Darts, slower)",  False),
-    ("tide",     "TiDE (Darts, slower)",   False),
 ]
 
 
 def build_train_command(python_exe: str, script_path: str, selected_models: list[str],
                         source: str, csv_dir: str, kafka_topic: str,
                         model_dir: str, trim: float) -> list[str] | None:
-    """
-    Pure command-building logic, deliberately separated from any Tkinter
-    state so it can be tested directly without a GUI event loop. Returns
-    None if nothing is selected -- the caller decides how to surface that.
-    """
     if not selected_models:
         return None
     cmd = [python_exe, "-u", script_path,
@@ -71,11 +65,12 @@ class TrainingGUI:
         source_frame = ttk.LabelFrame(self.root, text="Data Source", padding=10)
         source_frame.pack(fill="x", padx=10, pady=5)
 
-        self.source_var = tk.StringVar(value="csv")
-        ttk.Radiobutton(source_frame, text="Local CSV files", variable=self.source_var,
-                       value="csv", command=self._toggle_source).grid(row=0, column=0, sticky="w")
+        
+        self.source_var = tk.StringVar(value="kafka")
         ttk.Radiobutton(source_frame, text="Kafka", variable=self.source_var,
-                       value="kafka", command=self._toggle_source).grid(row=0, column=1, sticky="w")
+                       value="kafka", command=self._toggle_source).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(source_frame, text="Local CSV files", variable=self.source_var,
+                       value="csv", command=self._toggle_source).grid(row=0, column=1, sticky="w")
 
         ttk.Label(source_frame, text="CSV folder:").grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.csv_dir_var = tk.StringVar(value="live_telemetry_stream")
@@ -152,6 +147,9 @@ class TrainingGUI:
         try:
             child_env = os.environ.copy()
             child_env["PYTHONIOENCODING"] = "utf-8"
+            n_cores = str(os.cpu_count() or 4)
+            child_env["OMP_NUM_THREADS"] = n_cores
+            child_env["MKL_NUM_THREADS"] = n_cores
             self.process = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, cwd=self.project_root,
@@ -176,17 +174,16 @@ class TrainingGUI:
                 elif kind == "done":
                     self.train_button.config(state="normal")
                     if payload:
-                        self.status_var.set("\u2713 Training complete \u2014 results logged to MLflow")
+                        self.status_var.set("\u2713 Training complete - results logged to MLflow")
                         messagebox.showinfo(
                             "Training Complete",
                             "All selected models finished training successfully.\n\n"
                             "Results have been logged to MLflow.\n"
                             "Run this to view them:\n"
                             "mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db\n\n"
-                            "Or just start using the dashboard \u2014 it'll pick up the new models."
                         )
                     else:
-                        self.status_var.set("\u2717 Training failed \u2014 see log above")
+                        self.status_var.set("\u2717 Training failed - see log above")
                         messagebox.showerror(
                             "Training Failed",
                             "Training exited with an error. Check the log panel for details."

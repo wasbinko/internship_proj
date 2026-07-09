@@ -23,7 +23,7 @@ def parse_args():
                    help="Where to read new chunks from. csv = poll DATA_DIR for new "
                         "files (original behaviour). kafka = consume from a Kafka "
                         "topic using a persistent consumer group (offsets survive "
-                        "restarts — no processed_files bookkeeping needed).")
+                        "restarts - no processed_files bookkeeping needed).")
     p.add_argument("--kafka_bootstrap", default=KAFKA_BOOTSTRAP)
     p.add_argument("--kafka_topic", default=KAFKA_TOPIC)
     p.add_argument("--kafka_group", default=KAFKA_GROUP_ID)
@@ -37,31 +37,24 @@ DATA_DIR = "live_telemetry_stream"
 MODEL_DIR = "models"
 CHECK_INTERVAL_SECONDS = 30      # how often to poll the folder for new files (csv source only)
 
-# Kafka source settings (only used with --source kafka)
 KAFKA_BOOTSTRAP = "localhost:9092"
 KAFKA_TOPIC     = "telemetry.raw"
-KAFKA_GROUP_ID  = "alert-daemon"   # persistent consumer group — offsets survive restarts
+KAFKA_GROUP_ID  = "alert-daemon"   # persistent consumer group - offsets survive restarts
 
 # Email settings
 EMAIL_SENDER   = "wasbfifa228@gmail.com"
-EMAIL_PASSWORD = "XXXXXXXXXXXX"     # use an App Password, never a real password
+EMAIL_PASSWORD = "XXXXXXXXXXXXX"     # use an App Password, never a real password
 EMAIL_RECEIVER = "mammadovn228@gmail.com"
 
-# Models to run
 MODELS_TO_USE = ["stat", "lstm", "patchtst", "xgboost"]
 
-# Detection settings
-THRESHOLD_METHOD   = "mad"   # log-space median + k*MAD for forecaster/tree models
-THRESHOLD_K        = 4.0     # higher = stricter = fewer false alarms (forecasters)
-STAT_K             = 4.0     # base k for StatDetector's linear z-score threshold
-SCORE_SMOOTHING_S  = 5       # rolling-median smoothing window (seconds)
-MIN_DURATION_S     = 10      # discard flagged runs shorter than this
+THRESHOLD_METHOD   = "mad"  
+THRESHOLD_K        = 4.0    
+STAT_K             = 4.0     
+SCORE_SMOOTHING_S  = 5       
+MIN_DURATION_S     = 10      
 
-# Rolling context buffer: how many recent chunks to keep for scoring.
 BUFFER_CHUNKS = 10
-
-# Cooldown: once an alert fires, don't fire again for this many seconds even
-# if the same ongoing anomaly is still being flagged in subsequent chunks.
 ALERT_COOLDOWN_SECONDS = 0   # had this for anyone that might need to use this.
 
 
@@ -156,7 +149,7 @@ def smart_consensus(predictions: dict, scores: dict, stat_thresholds: tuple,
 def send_anomaly_email(filename: str, model_counts: dict, n_confirmed_regions: int,
                        confirmed_duration_s: int):
     msg = EmailMessage()
-    msg['Subject'] = f"🚨 CONFIRMED Telemetry Anomaly ({filename})"
+    msg['Subject'] = f"CONFIRMED Telemetry Anomaly ({filename})"
     msg['From'] = EMAIL_SENDER
     msg['To']   = EMAIL_RECEIVER
 
@@ -176,7 +169,7 @@ def send_anomaly_email(filename: str, model_counts: dict, n_confirmed_regions: i
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
             smtp.send_message(msg)
-        print(f"   📧 Alert email sent to {EMAIL_RECEIVER}")
+        print(f"   Alert email sent to {EMAIL_RECEIVER}")
     except Exception as e:
         print(f"   ❌ Failed to send email: {e}")
 
@@ -187,7 +180,7 @@ def send_anomaly_email(filename: str, model_counts: dict, n_confirmed_regions: i
 
 def main():
     args = parse_args()
-    print("🛡️  Starting Telemetry Watchdog Daemon (v3 — StatDetector + smart consensus)...")
+    print("  Starting Telemetry Watchdog Daemon...")
 
     bundles = load_all(MODEL_DIR)
     active_bundles = {k: v for k, v in bundles.items() if k in MODELS_TO_USE}
@@ -195,8 +188,8 @@ def main():
         print("No trained models found. Exiting.")
         return
     if "stat" not in active_bundles:
-        print("⚠️  WARNING: StatDetector ('stat') not found in models/. Frozen-sensor "
-              "anomalies will NOT be detected — forecasting models are structurally "
+        print("WARNING: StatDetector ('stat') not found in models/. Frozen-sensor "
+              "anomalies will NOT be detected - forecasting models are structurally "
               "blind to them. Run train.py with 'stat' included to fix this.")
     print(f"✅ Models loaded: {list(active_bundles.keys())}")
 
@@ -214,19 +207,16 @@ def main():
             print(f"ERROR: could not connect to Kafka broker at {args.kafka_bootstrap}: {e}")
             print("Check that the broker is running (see docker-compose.yml) and reachable.")
             return
-        print(f"👀 Consuming Kafka topic '{args.kafka_topic}' @ {args.kafka_bootstrap} "
+        print(f"Consuming Kafka topic '{args.kafka_topic}' @ {args.kafka_bootstrap} "
               f"(consumer group '{args.kafka_group}')")
 
-    print(f"⚙️  Detection: smart consensus (StatDetector strong OR weak+forecaster-backed) | "
+    print(f"Detection: smart consensus | "
           f"stat_k={STAT_K} | forecaster {THRESHOLD_METHOD} k={THRESHOLD_K} | "
           f"smoothing={SCORE_SMOOTHING_S}s | min_duration={MIN_DURATION_S}s | "
           f"buffer={BUFFER_CHUNKS} chunks")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # CSV-source-only bookkeeping. For the Kafka source, the broker's
-    # per-consumer-group committed offset replaces this entirely — a
-    # restarted daemon resumes exactly where it left off with no local state.
     processed_files = set(glob.glob(os.path.join(DATA_DIR, "*.csv"))) if args.source == "csv" else None
 
     chunk_buffer = deque(maxlen=BUFFER_CHUNKS)   # rolling context of recent DataFrames
@@ -243,7 +233,7 @@ def main():
                     try:
                         new_chunks.append((os.path.basename(file_path), pd.read_csv(file_path)))
                     except Exception as e:
-                        print(f"   ⚠️ Could not read {os.path.basename(file_path)}: {e}")
+                        print(f"   Could not read {os.path.basename(file_path)}: {e}")
                     processed_files.add(file_path)
             else:
                 polled = kafka_consumer.poll_new_chunks(max_records=50)
@@ -286,7 +276,7 @@ def main():
                                 linear_threshold(sc_smooth, STAT_K * 1.5),   # strong
                                 linear_threshold(sc_smooth, max(1.0, STAT_K * 0.6)),  # weak
                             )
-                            print(f"   ⚠️ {name}: no saved nominal threshold found, using live "
+                            print(f"   {name}: no saved nominal threshold found, using live "
                                   f"median+MAD (retrain with current train.py to fix)")
                     else:
  
@@ -308,8 +298,6 @@ def main():
                     smoothed[name]    = sc_smooth
                     model_counts[name] = int(pred.sum())
 
-                # Only look at the TAIL of the buffer corresponding to the new chunk —
-                # earlier rows have already been evaluated in prior iterations.
                 n_new = len(df_new)
                 tail_predictions = {k: v[-n_new:] for k, v in predictions.items()}
                 tail_smoothed     = {k: v[-n_new:] for k, v in smoothed.items()}
@@ -326,17 +314,17 @@ def main():
 
                 if confirmed and not cooldown_active:
                     total_dur = sum(e - s for s, e in confirmed)
-                    print(f"   🚨 CONFIRMED anomaly: {len(confirmed)} region(s), {total_dur}s total.")
+                    print(f"   CONFIRMED anomaly: {len(confirmed)} region(s), {total_dur}s total.")
                     send_anomaly_email(chunk_id, model_counts, len(confirmed), total_dur)
                     last_alert_time = now
                 elif confirmed and cooldown_active:
                     remaining = int(ALERT_COOLDOWN_SECONDS - (now - last_alert_time))
-                    print(f"   🔇 Anomaly still ongoing but within cooldown "
-                          f"({remaining}s remaining) — not re-alerting.")
+                    print(f"   Anomaly still ongoing but within cooldown "
+                          f"({remaining}s remaining) - not re-alerting.")
                 else:
                     flagged_models = [k for k, v in model_counts.items() if v > 0]
                     if flagged_models:
-                        print(f"   ✅ Nominal — {flagged_models} flagged isolated points "
+                        print(f"   ✅ Nominal - {flagged_models} flagged isolated points "
                               f"but consensus rejected them as unconfirmed noise.")
                     else:
                         print("   ✅ Nominal. No anomalies detected.")
@@ -344,7 +332,7 @@ def main():
             time.sleep(CHECK_INTERVAL_SECONDS)
 
     except KeyboardInterrupt:
-        print("\n🛑 Watchdog stopped.")
+        print("\nWatchdog stopped.")
     finally:
         if kafka_consumer is not None:
             kafka_consumer.close()

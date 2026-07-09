@@ -49,8 +49,8 @@ MODEL_LABELS = {
 }
 
 ANOMALY_TYPE_INFO = {
-    "frozen_sensor":    ("Frozen Sensor",   "cso1 stops varying — variance collapses. Caught almost exclusively by StatDetector — forecasters see a frozen value as 'trivially predictable' and miss it entirely."),
-    "contextual_break": ("Contextual Break", "arnd goes quiet while bfo2 keeps drifting — broken cause-effect relationship between two channels. Caught by forecaster cross-channel error."),
+    "frozen_sensor":    ("Frozen Sensor",   "cso1 stops varying - variance collapses. Caught almost exclusively by StatDetector - forecasters see a frozen value as 'trivially predictable' and miss it entirely."),
+    "contextual_break": ("Contextual Break", "arnd goes quiet while bfo2 keeps drifting - broken cause-effect relationship between two channels. Caught by forecaster cross-channel error."),
     "massive_spike":    ("Massive Spike",    "arnd shoots up 20σ. Caught by all models; IsolationForest and XGBoost react fastest."),
 }
 
@@ -97,7 +97,7 @@ def load_data_kafka(bootstrap_servers: str, topic: str, n_chunks: int) -> tuple[
     try:
         consumer = TelemetryConsumer(
             bootstrap_servers=bootstrap_servers, topic=topic,
-            group_id=None,   # one-shot read, no persistent offset — see read_last_n_chunks
+            group_id=None,   # one-shot read, no persistent offset - see read_last_n_chunks
         )
         chunks = consumer.read_last_n_chunks(n_chunks)
         consumer.close()
@@ -194,7 +194,7 @@ def build_event_options(pred: np.ndarray, sc: np.ndarray, x, min_row: int = 0,
 
     # Fallback: if every flagged region is shorter than min_duration (e.g. a
     # model that only ever fires single-second blips), don't hide everything
-    # — just drop the duration filter rather than showing an empty list.
+    # - just drop the duration filter rather than showing an empty list.
     if not candidates:
         for s, e in _regions(pred):
             peak_offset = int(np.argmax(sc[s:e])) if e > s else 0
@@ -309,7 +309,7 @@ tab_cfg, tab_results, tab_deep, tab_compare, tab_health = st.tabs([
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — Configure & Run
+# TAB 1 - Configure & Run
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_cfg:
     st.title("Telemetry Anomaly Intelligence Platform")
@@ -340,7 +340,7 @@ with tab_cfg:
         with ac3:
             if auto_run_enabled:
                 file_note = f"loading the {n_files_for_interval} most recent file(s)/chunk(s)"
-                st.info(f"Auto-run is ON, synced to incoming data — {file_note}. "
+                st.info(f"Auto-run is ON, synced to incoming data - {file_note}. "
                        f"Status detail appears above the Run button below.")
 
         if auto_run_enabled:
@@ -365,7 +365,7 @@ with tab_cfg:
             if auto_run_enabled:
                 n_files = n_files_for_interval
                 st.slider("Files to load (most recent)", 1, 50, n_files, disabled=True,
-                         help="Locked to the auto-run interval above — each file covers "
+                         help="Locked to the auto-run interval above - each file covers "
                               "5 minutes, so this always matches the schedule.")
             else:
                 n_files  = st.slider("Files to load (most recent)", 1, 50, 10,
@@ -384,7 +384,7 @@ with tab_cfg:
             if auto_run_enabled:
                 n_files = n_files_for_interval
                 st.slider("Chunks to load (most recent)", 1, 50, n_files, disabled=True,
-                         help="Locked to the auto-run interval above — each chunk covers "
+                         help="Locked to the auto-run interval above - each chunk covers "
                               "5 minutes, so this always matches the schedule.")
             else:
                 n_files = st.slider("Chunks to load (most recent)", 1, 50, 10,
@@ -408,7 +408,7 @@ with tab_cfg:
         if available_models:
             st.success(f"{len(available_models)} trained model(s) found: {', '.join(available_models)}")
             if "stat" not in available_models:
-                st.warning("StatDetector not trained — this is the primary detector for "
+                st.warning("StatDetector not trained - this is the primary detector for "
                           "frozen-sensor anomalies. Run `train.py` with `stat` included.")
         else:
             st.warning(f"No trained models in `{model_dir}`. Run `python scripts/train.py` first.")
@@ -418,7 +418,7 @@ with tab_cfg:
                           "Model bundles are normally reloaded automatically when the files "
                           "on disk change, but this clears the cache manually as a safety net."):
             st.cache_resource.clear()
-            st.success("Model cache cleared — next Run will load fresh from disk.")
+            st.success("Model cache cleared - next Run will load fresh from disk.")
 
     st.divider()
 
@@ -470,8 +470,8 @@ with tab_cfg:
             "Threshold method",
             ["mad", "iqr", "pct"],
             help=(
-                "mad: median + k·MAD  — most robust, recommended\n"
-                "iqr: median + k·IQR  — slightly less robust\n"
+                "mad: median + k·MAD  - most robust, recommended\n"
+                "iqr: median + k·IQR  - slightly less robust\n"
                 "pct: top (100-k)% percentile of scores"
             ),
         )
@@ -516,7 +516,7 @@ with tab_cfg:
     use_smart_consensus = False
     n_forecasters_enabled = len([n for n in ("lstm","patchtst","xgboost") if n in enabled])
     if "stat" in enabled or n_forecasters_enabled >= 2:
-        st.markdown("**Smart Consensus** (recommended — combines complementary detector strengths)")
+        st.markdown("**Smart Consensus** (recommended - combines complementary detector strengths)")
         ccol1, ccol2 = st.columns([1, 2])
         with ccol1:
             use_smart_consensus = st.checkbox(
@@ -538,7 +538,7 @@ with tab_cfg:
                 elif "stat" in enabled:
                     st.caption("Select 2+ forecasters for full coverage.")
                 else:
-                    st.caption(f"No StatDetector — frozen-sensor detection unavailable.")
+                    st.caption(f"No StatDetector - frozen-sensor detection unavailable.")
 
     if len(enabled) >= 2:
         st.markdown("**Ensemble weights** (drag to adjust model influence)")
@@ -585,7 +585,7 @@ with tab_cfg:
         file_note = f"loading the {max(1, int(auto_run_minutes)//5)} most recent file(s)/chunk(s)"
 
         if latest_data_ts is None:
-            st.info(f"Auto-run is ON, waiting for data to become available — {file_note}.")
+            st.info(f"Auto-run is ON, waiting for data to become available - {file_note}.")
         elif last_seen_data_ts is None:
             auto_run_triggered = True
             st.session_state["last_auto_run_data_ts"] = latest_data_ts
@@ -598,7 +598,7 @@ with tab_cfg:
                 st.session_state["last_auto_run_ts"] = time.time()
             else:
                 have_min = max(0, data_elapsed / 60)
-                st.info(f"Auto-run is ON, synced to incoming data — last run used data through "
+                st.info(f"Auto-run is ON, synced to incoming data - last run used data through "
                        f"{last_seen_data_ts:%H:%M:%S}. Next run once {auto_run_minutes} minutes "
                        f"of new data has arrived ({have_min:.1f} so far), {file_note}.")
 
@@ -724,7 +724,7 @@ with tab_cfg:
                         threshold_basis[name] = "saved (nominal-calibrated, k-scaled)"
                     else:
                         thr = _linear_threshold(sc_smooth, k_val)
-                        threshold_basis[name] = "live (linear, no saved threshold — retrain to fix)"
+                        threshold_basis[name] = "live (linear, no saved threshold - retrain to fix)"
                 else:
                     saved_bundle = active_bundles.get(name, {})
                     saved_thr = None
@@ -740,7 +740,7 @@ with tab_cfg:
                         threshold_basis[name] = "saved (nominal-calibrated)"
                     else:
                         thr = _log_threshold(sc_smooth, thr_method, k_val)
-                        threshold_basis[name] = "live (log-MAD, no saved threshold — retrain to fix)"
+                        threshold_basis[name] = "live (log-MAD, no saved threshold - retrain to fix)"
                 pred = (sc_smooth > thr).astype(int)
 
                 win = _warmup_length(name)
@@ -837,7 +837,7 @@ with tab_cfg:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Results
+# TAB 2 - Results
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_results:
     r = st.session_state.get("results")
@@ -868,7 +868,7 @@ with tab_results:
         st.divider()
 
         # ── Combined score chart ──
-        st.subheader("Anomaly Scores — All Models")
+        st.subheader("Anomaly Scores - All Models")
         fig = go.Figure()
 
         for name, sc in all_scores.items():
@@ -898,7 +898,7 @@ with tab_results:
             cons_pred = predictions["consensus"]
             shade(fig, cons_pred, "rgba(255,59,59,0.22)", x=x)
             fig.add_annotation(
-                text="Red bands = Confirmed (StatDetector + Forecaster consensus) — "
+                text="Red bands = Confirmed (StatDetector + Forecaster consensus) - "
                      "the recommended primary signal",
                 xref="paper", yref="paper", x=0, y=1.08, showarrow=False,
                 font=dict(color="#DC2626", size=11), align="left",
@@ -931,13 +931,13 @@ with tab_results:
             color = MODEL_COLORS[name]
             basis = threshold_basis.get(name, "")
 
-            with st.expander(f"{MODEL_LABELS[name]}  —  {int(pred.sum()):,} anomalies flagged  ({pred.mean()*100:.1f}%)", expanded=True):
+            with st.expander(f"{MODEL_LABELS[name]}  -  {int(pred.sum()):,} anomalies flagged  ({pred.mean()*100:.1f}%)", expanded=True):
                 if basis.startswith("live (log-MAD"):
                     st.warning(f"{name} is using a live-computed threshold (no nominal "
                               "calibration found in the saved model). A handful of rare, "
                               "harmless single-point forecast noise spikes can inflate this "
                               "threshold and make real anomalies harder to cross. **Retrain "
-                              "with the current train.py to fix this** — it now saves a "
+                              "with the current train.py to fix this** - it now saves a "
                               "threshold calibrated on clean nominal data.")
 
                 fig2 = go.Figure()
@@ -1003,7 +1003,7 @@ with tab_results:
                     reason_arr = r.get("consensus_reason")
                     fc_names_used = r.get("consensus_forecaster_names", [])
                     if reason_arr is None:
-                        st.caption("Reason tracking unavailable for this run — rerun "
+                        st.caption("Reason tracking unavailable for this run - rerun "
                                   "Configure & Run to enable it.")
                     else:
                         events_c = build_event_options(pred, sc, x)
@@ -1012,12 +1012,12 @@ with tab_results:
                             idx_c = chosen_c["peak_idx"]
                             reason_code = int(reason_arr[idx_c])
                             reason_text = {
-                                1: "**StatDetector alone was strongly elevated** — confident "
+                                1: "**StatDetector alone was strongly elevated** - confident "
                                    "enough on its own, no forecaster backup needed. This path "
                                    "typically catches frozen sensors and stuck-binary events "
                                    "that forecasters structurally can't see.",
-                                2: "**StatDetector was only mildly elevated** — not enough to "
-                                   "confirm alone — **but at least one forecaster independently "
+                                2: "**StatDetector was only mildly elevated** - not enough to "
+                                   "confirm alone - **but at least one forecaster independently "
                                    "agreed**, which was enough to promote it to confirmed. This "
                                    "is the most permissive of the three paths: it only needs "
                                    "ONE forecaster, not two, as long as StatDetector shows even "
@@ -1025,7 +1025,7 @@ with tab_results:
                                 3: "**Two or more forecasters agreed independently**, regardless "
                                    "of what StatDetector showed. This path exists because "
                                    "forecasters are reliable on their own for spike/contextual "
-                                   "anomalies — it doesn't require StatDetector's permission.",
+                                   "anomalies - it doesn't require StatDetector's permission.",
                                 0: "No specific reason recorded for this exact point (it may sit "
                                    "at the edge of a confirmed region due to smoothing).",
                             }.get(reason_code, "Unknown.")
@@ -1154,7 +1154,7 @@ with tab_results:
                                 confidence_ok = abs(cresult["convergence_delta"]) < 0.5
                                 if not confidence_ok:
                                     st.caption("Note: this explanation is a rougher estimate than "
-                                              "usual for this particular moment — treat it as a "
+                                              "usual for this particular moment - treat it as a "
                                               "general guide rather than an exact breakdown.")
 
                                 with st.expander("Technical details (for the curious)"):
@@ -1184,7 +1184,7 @@ with tab_results:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — Deep Dive
+# TAB 3 - Deep Dive
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_deep:
     r = st.session_state.get("results")
@@ -1198,7 +1198,7 @@ with tab_deep:
         st.subheader("Channel Signals with Anomaly Overlays")
         with st.expander("Anomaly type quick reference"):
             for atype, (label, desc) in ANOMALY_TYPE_INFO.items():
-                st.markdown(f"**{label}** — {desc}")
+                st.markdown(f"**{label}** - {desc}")
 
 
         non_ens_preds = [np.asarray(p).ravel() for k, p in predictions_d.items() if k != "ensemble"]
@@ -1245,7 +1245,7 @@ with tab_deep:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — Model Comparison
+# TAB 4 - Model Comparison
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_compare:
     r = st.session_state.get("results")
@@ -1335,10 +1335,10 @@ with tab_compare:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — Info
+# TAB 5 - Info
 # ═══════════════════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB — Data Health (drift monitoring)
+# TAB - Data Health (drift monitoring)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_health:
     from drift import (check_drift, overall_drift_status,
@@ -1381,7 +1381,7 @@ with tab_health:
     if not baseline_exists:
         st.warning(
             f"No drift baseline found at `{baseline_path}`. This file is created "
-            "automatically the next time you train — retrain with the current "
+            "automatically the next time you train - retrain with the current "
             "train.py to enable this check."
         )
 
@@ -1419,28 +1419,62 @@ with tab_health:
         status = dr["status"]
         banner = {"stable": st.success, "moderate": st.warning, "significant": st.error}[status]
         banner_text = {
-            "stable": f"Stable — no meaningful drift across {dr['n_rows']:,} recent rows. "
+            "stable": f"Stable - no meaningful drift across {dr['n_rows']:,} recent rows. "
                      "Current models should still be reliable.",
             "moderate": f"Moderate drift detected across {dr['n_rows']:,} recent rows. "
-                       "Not urgent, but worth watching — consider retraining if this "
+                       "Not urgent, but worth watching - consider retraining if this "
                        "persists across repeated checks.",
             "significant": f"Significant drift detected across {dr['n_rows']:,} recent rows. "
-                          "At least one channel's baseline no longer reflects current "
-                          "normal behaviour — detection quality may be degraded. "
                           "Consider retraining.",
         }[status]
         banner(banner_text)
 
         st.markdown("**Per-channel breakdown**")
         for rep in dr["reports"]:
-            with st.expander(f"{rep['channel']}  —  {rep['severity']}  (PSI = {rep['psi']:.3f})",
+            with st.expander(f"{rep['channel']}  -  {rep['severity']}  (PSI = {rep['psi']:.3f})",
                              expanded=(rep["severity"] != "stable")):
 
-                pc1, pc2 = st.columns(2)
+                pc1, pc2, pc3 = st.columns([1, 1, 1])
                 pc1.metric("Baseline (training time)",
                           f"mean {rep['baseline_mean']:.3f}, spread {rep['baseline_std']:.3f}")
                 pc2.metric("Current (just now)",
                           f"mean {rep['current_mean']:.3f}, spread {rep['current_std']:.3f}")
+                severity_color = {"stable": "#15803D", "moderate": "#B45309", "significant": "#DC2626"}[rep["severity"]]
+                with pc3:
+                    st.markdown("PSI (drift score)")
+                    st.markdown(
+                        f"<span style='font-size:1.9rem; font-weight:600; color:{severity_color}'>"
+                        f"{rep['psi']:.3f}</span> "
+                        f"<span style='color:{severity_color}; font-weight:600'>{rep['severity']}</span>",
+                        unsafe_allow_html=True,
+                    )
+                bvals = rep["baseline_samples"]
+                cvals = rep["current_samples"]
+                fig_h = go.Figure()
+                fig_h.add_trace(go.Histogram(
+                    x=bvals, name="Baseline (training time)", opacity=0.55,
+                    marker_color="#1D4ED8", histnorm="probability density", nbinsx=40,
+                ))
+                fig_h.add_trace(go.Histogram(
+                    x=cvals, name="Current (just now)", opacity=0.55,
+                    marker_color="#DC2626", histnorm="probability density", nbinsx=40,
+                ))
+                fig_h.add_vline(x=float(np.nanmean(bvals)), line_dash="dash", line_color="#1D4ED8",
+                               annotation_text="baseline mean", annotation_position="top left")
+                fig_h.add_vline(x=float(np.nanmean(cvals)), line_dash="dash", line_color="#DC2626",
+                               annotation_text="current mean", annotation_position="top right")
+                fig_h.update_layout(
+                    barmode="overlay", template="plotly_white", height=280,
+                    margin=dict(t=30, b=10, l=10, r=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    xaxis_title=f"{rep['channel']} value (differenced)" if rep["channel"] != "cso1"
+                                else f"{rep['channel']} value",
+                    yaxis_title="density",
+                )
+                st.plotly_chart(fig_h, width='stretch')
+ 
+        st.caption(f"Thresholds: stable < {PSI_STABLE_THRESHOLD}, "
+                  f"moderate < {PSI_MODERATE_THRESHOLD}, significant \u2265 {PSI_MODERATE_THRESHOLD}.")
 
         st.caption(f"Thresholds: stable < {PSI_STABLE_THRESHOLD}, "
                   f"moderate < {PSI_MODERATE_THRESHOLD}, significant \u2265 {PSI_MODERATE_THRESHOLD}.")

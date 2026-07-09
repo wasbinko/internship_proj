@@ -24,7 +24,7 @@ try:
                              save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
 except ImportError:
     try:
-        from scripts.nhits_model import (train_nhits, score_series as nhits_score_series,
+        from nhits_model import (train_nhits, score_series as nhits_score_series,
                                          calibrate_channel_norm as nhits_calibrate_channel_norm,
                                          save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
     except ImportError as e:
@@ -37,7 +37,7 @@ try:
                             save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
 except ImportError:
     try:
-        from scripts.tide_model import (train_tide, score_series as tide_score_series,
+        from tide_model import (train_tide, score_series as tide_score_series,
                                         calibrate_channel_norm as tide_calibrate_channel_norm,
                                         save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
     except ImportError as e:

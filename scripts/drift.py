@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 import numpy as np
 import pandas as pd
@@ -71,7 +69,11 @@ def build_baseline_snapshot(raw_data: np.ndarray, sensors: list[str],
 
 def check_drift(baseline_snapshot: dict, current_raw: np.ndarray,
                 sensors: list[str], n_bins: int = 10) -> list[dict]:
-
+    """
+    Compare current live data against the saved baseline snapshot, per
+    channel. Returns a list of per-channel drift reports, worst-first, so
+    the most concerning channel is always first regardless of column order.
+    """
     ch_types = baseline_snapshot.get("ch_types", {})
     reports = []
     for i, s in enumerate(sensors):
@@ -88,6 +90,8 @@ def check_drift(baseline_snapshot: dict, current_raw: np.ndarray,
             "baseline_std":  float(np.nanstd(baseline_vals)),
             "current_mean":  float(np.nanmean(current_vals)),
             "current_std":   float(np.nanstd(current_vals)),
+            "baseline_samples": baseline_vals,
+            "current_samples":  current_vals,
         })
     reports.sort(key=lambda r: r["psi"], reverse=True)
     return reports

@@ -45,32 +45,32 @@ class DaemonGUI:
         source_frame = ttk.LabelFrame(self.root, text="Data Source", padding=10)
         source_frame.pack(fill="x", padx=10, pady=(10, 5))
 
-        self.source_var = tk.StringVar(value="csv")
-        ttk.Radiobutton(source_frame, text="Local CSV files", variable=self.source_var,
-                       value="csv", command=self._toggle_source).grid(row=0, column=0, sticky="w")
+        self.source_var = tk.StringVar(value="kafka")
         ttk.Radiobutton(source_frame, text="Kafka", variable=self.source_var,
-                       value="kafka", command=self._toggle_source).grid(row=0, column=1, sticky="w")
+                       value="kafka", command=self._toggle_source).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(source_frame, text="Local CSV files", variable=self.source_var,
+                       value="csv", command=self._toggle_source).grid(row=0, column=1, sticky="w")
 
         ttk.Label(source_frame, text="Kafka bootstrap:").grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.kafka_bootstrap_var = tk.StringVar(value="localhost:9092")
         self.kafka_bootstrap_entry = ttk.Entry(source_frame, textvariable=self.kafka_bootstrap_var,
-                                               width=30, state="disabled")
+                                               width=30, state="enabled")
         self.kafka_bootstrap_entry.grid(row=1, column=1, sticky="w", pady=(8, 0))
 
         ttk.Label(source_frame, text="Kafka topic:").grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.kafka_topic_var = tk.StringVar(value="telemetry.raw")
         self.kafka_topic_entry = ttk.Entry(source_frame, textvariable=self.kafka_topic_var,
-                                          width=30, state="disabled")
+                                          width=30, state="enabled")
         self.kafka_topic_entry.grid(row=2, column=1, sticky="w", pady=(4, 0))
 
         ttk.Label(source_frame, text="Kafka group:").grid(row=3, column=0, sticky="w", pady=(4, 0))
         self.kafka_group_var = tk.StringVar(value="alert-daemon")
         self.kafka_group_entry = ttk.Entry(source_frame, textvariable=self.kafka_group_var,
-                                          width=30, state="disabled")
+                                          width=30, state="enabled")
         self.kafka_group_entry.grid(row=3, column=1, sticky="w", pady=(4, 0))
 
         note = ("Data folder, model folder, and email sender are set as constants inside "
-                "alert_daemon.py itself, not here — edit that file directly to change them.")
+                "alert_daemon.py itself, not here - edit that file directly to change them.")
         ttk.Label(source_frame, text=note, wraplength=650, foreground="#555").grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
 

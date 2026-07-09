@@ -8,11 +8,10 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 
-# --- Configuration ---
 OUTPUT_FOLDER = "live_telemetry_stream"
 ROWS_PER_FILE = 300     # Exactly 5 minutes at 1 Hz
-INTERVAL_SECONDS = 300  # 5 minutes
-ANOMALY_PROBABILITY = 0.25  # 25% chance to inject an anomaly per file
+INTERVAL_SECONDS = 300 
+ANOMALY_PROBABILITY = 0.25 
 
 
 def generate_telemetry_chunk(start_time, num_rows, inject_anomaly=False,

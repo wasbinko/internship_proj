@@ -34,7 +34,7 @@ def load_recent_data(args) -> pd.DataFrame | None:
             return None
         return pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
     else:
-        from scripts.kafka_io import TelemetryConsumer, chunks_to_dataframe
+        from kafka_io import TelemetryConsumer, chunks_to_dataframe
         consumer = TelemetryConsumer(
             bootstrap_servers=args.kafka_bootstrap, topic=args.kafka_topic,
             group_id=None,   # one-shot read, same as the app's Kafka mode

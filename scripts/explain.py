@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from scripts.models import make_stationary, rolling_features
+from models import make_stationary, rolling_features
 
 
 def rolling_feature_names(sensors: list[str], ch_types: dict,
