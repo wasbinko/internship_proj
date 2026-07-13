@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 import argparse, os, pickle, sys, time, warnings
 warnings.filterwarnings("ignore")
@@ -8,6 +7,8 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import RobustScaler
+
+torch.set_num_threads(os.cpu_count() or 4)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import (
@@ -24,7 +25,7 @@ try:
                              save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
 except ImportError:
     try:
-        from nhits_model import (train_nhits, score_series as nhits_score_series,
+        from scripts.nhits_model import (train_nhits, score_series as nhits_score_series,
                                          calibrate_channel_norm as nhits_calibrate_channel_norm,
                                          save_nhits, NHITS_AVAILABLE, NHITS_IMPORT_ERROR)
     except ImportError as e:
@@ -37,7 +38,7 @@ try:
                             save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
 except ImportError:
     try:
-        from tide_model import (train_tide, score_series as tide_score_series,
+        from scripts.tide_model import (train_tide, score_series as tide_score_series,
                                         calibrate_channel_norm as tide_calibrate_channel_norm,
                                         save_tide, TIDE_AVAILABLE, TIDE_IMPORT_ERROR)
     except ImportError as e:
@@ -58,7 +59,7 @@ def get_mlflow(enabled: bool, tracking_dir: str, experiment: str):
     try:
         import mlflow
     except ImportError:
-        print("[MLFLOW] mlflow not installed - skipping tracking. `pip install mlflow` to enable.")
+        print("[MLFLOW] mlflow not installed — skipping tracking. `pip install mlflow` to enable.")
         return None
     os.makedirs(tracking_dir, exist_ok=True)
     db_path = os.path.join(os.path.abspath(tracking_dir), "mlflow.db")
@@ -68,7 +69,7 @@ def get_mlflow(enabled: bool, tracking_dir: str, experiment: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Evaluation against a labeled test set
+# Evaluation against a labeled test set (optional — for real P/R/F1 in MLflow)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def load_labeled_eval(eval_dir: str, eval_labels: str):
@@ -105,6 +106,7 @@ def evaluate_predictions(pred: np.ndarray, labels: np.ndarray) -> dict:
 
 def smart_consensus_predictions(stat_scores, forecaster_predictions: dict,
                                 stat_k: float, min_forecaster_agree: int = 2) -> np.ndarray:
+
     def smooth(sc, w=5):
         return pd.Series(sc).rolling(w, center=True, min_periods=1).median().values
     def linear_thr(sc, k):
@@ -203,19 +205,19 @@ def train_nn(model, X, y, epochs, bs, lr, val_frac, device, label):
     return model.cpu()
 
 
-def trim_contamination(scores_per_row, trim_frac, smooth_window=15, pad=5):
+def trim_contamination(scores_per_row, trim_enabled, k=4.0, smooth_window=15, pad=5):
     import pandas as pd
     n = len(scores_per_row)
-    if trim_frac <= 0:
+    if not trim_enabled:
         return np.ones(n, dtype=bool)
 
     smoothed = pd.Series(scores_per_row).rolling(
         smooth_window, center=True, min_periods=1).max().values
-    cutoff = np.percentile(smoothed, (1 - trim_frac) * 100)
+    med = np.median(smoothed)
+    mad = np.median(np.abs(smoothed - med)) * 1.4826
+    cutoff = med + k * max(mad, 1e-9)
     flagged = smoothed > cutoff
 
-    # Pad each flagged segment slightly so we don't leave a sliver of
-    # transition rows right at a real anomaly's edge in the "clean" set.
     keep_mask = ~flagged
     d = np.diff(np.concatenate([[0], flagged.astype(int), [0]]))
     starts, ends = np.where(d == 1)[0], np.where(d == -1)[0]
@@ -230,7 +232,7 @@ def main():
     p.add_argument("--source", choices=["csv", "kafka"], default="csv",
                    help="Where to load training data from. csv = read files from "
                         "--data_dir (original behaviour). kafka = read historical "
-                        "chunks directly from a topic - use this if you're running "
+                        "chunks directly from a topic — use this if you're running "
                         "generate_telemetry.py with --sink kafka and no CSV files "
                         "land on disk anymore.")
     p.add_argument("--data_dir", default="live_telemetry_stream",
@@ -242,18 +244,9 @@ def main():
     p.add_argument("--sensors", nargs="+", default=None)
     p.add_argument("--models", nargs="+",
                    default=["lstm","patchtst","xgboost","iforest","stat"],
-                   choices=["lstm","patchtst","xgboost","iforest","stat","nhits","tide"],
-                   help="'nhits' and 'tide' are opt-in (not trained by default) -- "
-                        "both are heavier third-party dependencies (Darts + PyTorch "
-                        "Lightning) offering more sophisticated forecasting "
-                        "architectures as alternatives to the from-scratch "
-                        "LSTM/PatchTST. Same role, same interface, fancier engines. "
-                        "TiDE is the lighter-weight of the two -- an MLP-based "
-                        "architecture that trains faster than NHITS with comparable "
-                        "accuracy on standard benchmarks.")
-    p.add_argument("--trim", type=float, default=0.25,
-                   help="Fraction of worst-scoring training rows to drop as "
-                        "likely-contaminated before final training. 0 = data is clean.")
+                   choices=["lstm","patchtst","xgboost","iforest","stat","nhits","tide"])
+    p.add_argument("--trim", type=float, default=0.25)
+    p.add_argument("--trim_k", type=float, default=4.0)
     p.add_argument("--window", type=int, default=60)
     p.add_argument("--stride", type=int, default=3)
     p.add_argument("--max_windows", type=int, default=50_000)
@@ -283,7 +276,7 @@ def main():
     p.add_argument("--force_cpu", action="store_true")
     # MLflow tracking
     p.add_argument("--mlflow", dest="use_mlflow", action="store_true", default=True,
-                   help="Enable MLflow tracking (default on - local file store, no server needed).")
+                   help="Enable MLflow tracking (default on — local file store, no server needed).")
     p.add_argument("--no_mlflow", dest="use_mlflow", action="store_false",
                    help="Disable MLflow tracking entirely.")
     p.add_argument("--mlflow_dir", default="mlruns",
@@ -325,6 +318,7 @@ def main():
 
     raw = df[sensors].values.astype(np.float32)
 
+
     drift_baseline = build_baseline_snapshot(raw, sensors, ch_types)
     with open(os.path.join(args.model_dir, "drift_baseline.pkl"), "wb") as f:
         pickle.dump(drift_baseline, f)
@@ -352,7 +346,7 @@ def main():
         Xa = np.ascontiguousarray(Xa); ya = np.ascontiguousarray(ya)
         ws = nn_forecast_errors(scout, Xa, ya, cn, device, agg="max")
         row_scores = errors_to_timestep(ws, ea, len(raw))
-        keep_mask = trim_contamination(row_scores, args.trim)
+        keep_mask = trim_contamination(row_scores, args.trim > 0, k=args.trim_k)
         print(f"[TRIM] Keeping {keep_mask.sum():,}/{len(raw):,} rows "
               f"({keep_mask.mean()*100:.0f}%) as clean baseline")
 
@@ -432,7 +426,7 @@ def main():
                     if mlflow:
                         mlflow.log_metrics({f"eval_{k}": v for k,v in metrics.items()})
 
-        # ── NHITS (via Darts) - opt-in, not trained by default ──
+        # ── NHITS (via Darts) — opt-in, not trained by default ──
         if "nhits" in args.models:
             print(f"\n{'='*50}\n[NHITS]\n{'='*50}")
             if not NHITS_AVAILABLE:
@@ -443,7 +437,6 @@ def main():
             else:
                 child_ctx = mlflow.start_run(run_name="nhits", nested=True) if mlflow else nullcontext()
                 with child_ctx:
-                    
                     nhits_model = train_nhits(
                         stat_clean_scaled, sensors, window=args.window,
                         epochs=args.nhits_epochs, num_stacks=args.nhits_stacks,
@@ -496,7 +489,7 @@ def main():
                         if mlflow:
                             mlflow.log_metrics({f"eval_{k}": v for k, v in metrics.items()})
 
-        # ── TiDE (via Darts) - opt-in, not trained by default ──
+        # ── TiDE (via Darts) — opt-in, not trained by default ──
         if "tide" in args.models:
             print(f"\n{'='*50}\n[TiDE]\n{'='*50}")
             if not TIDE_AVAILABLE:

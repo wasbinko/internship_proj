@@ -44,7 +44,7 @@ KAFKA_TOPIC     = "telemetry.raw"
 KAFKA_GROUP_ID  = "alert-daemon"   # persistent consumer group - offsets survive restarts
 
 EMAIL_SENDER   = "wasbfifa228@gmail.com"
-EMAIL_PASSWORD = "XXXXXXXXXXXXXXX"     # use an App Password, never a real password
+EMAIL_PASSWORD = "xxxxxxxxxxxxxx"     # use an App Password, never a real password
 EMAIL_RECEIVER = "mammadovn228@gmail.com"
 
 MODELS_TO_USE = ["stat", "lstm", "patchtst", "xgboost"]
@@ -319,13 +319,8 @@ def main():
                     remaining = int(ALERT_COOLDOWN_SECONDS - (now - last_alert_time))
                     print(f"   Anomaly still ongoing but within cooldown "
                           f"({remaining}s remaining) - not re-alerting.")
-                else:
-                    flagged_models = [k for k, v in model_counts.items() if v > 0]
-                    if flagged_models:
-                        print(f"   ✅ Nominal - {flagged_models} flagged isolated points "
-                              f"but consensus rejected them as unconfirmed noise.")
-                    else:
-                        print("   ✅ Nominal. No anomalies detected.")
+                else:    
+                    print("   Nominal. No continous anomalies detected.")
 
             time.sleep(CHECK_INTERVAL_SECONDS)
 

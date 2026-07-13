@@ -49,9 +49,9 @@ MODEL_LABELS = {
 }
 
 ANOMALY_TYPE_INFO = {
-    "frozen_sensor":    ("Frozen Sensor",   "cso1 stops varying - variance collapses. Caught almost exclusively by StatDetector - forecasters see a frozen value as 'trivially predictable' and miss it entirely."),
-    "contextual_break": ("Contextual Break", "arnd goes quiet while bfo2 keeps drifting - broken cause-effect relationship between two channels. Caught by forecaster cross-channel error."),
-    "massive_spike":    ("Massive Spike",    "arnd shoots up 20σ. Caught by all models; IsolationForest and XGBoost react fastest."),
+    "frozen_sensor":    ("Frozen Sensor",   "Caught mostly by StatDetector forecasters usually miss it entirely."),
+    "contextual_break": ("Contextual Break", "arnd goes quiet while bfo2 keeps drifting. Caught by forecaster cross-channel error."),
+    "massive_spike":    ("Massive Spike",    "arnd shoots up 20. Caught by all models usually."),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ def load_data_kafka(bootstrap_servers: str, topic: str, n_chunks: int) -> tuple[
     try:
         consumer = TelemetryConsumer(
             bootstrap_servers=bootstrap_servers, topic=topic,
-            group_id=None,   # one-shot read, no persistent offset - see read_last_n_chunks
+            group_id=None, 
         )
         chunks = consumer.read_last_n_chunks(n_chunks)
         consumer.close()
@@ -106,7 +106,7 @@ def load_data_kafka(bootstrap_servers: str, topic: str, n_chunks: int) -> tuple[
 
     df = chunks_to_dataframe(chunks)
     if df is None:
-        return None, f"No messages found on topic '{topic}'. Is the producer running?"
+        return None, f"No messages found on topic '{topic}'. Is the generator running?"
     return df, ""
 
 
@@ -119,8 +119,6 @@ def get_latest_data_timestamp(source_mode: str, data_dir: str | None = None,
         files = sorted(glob.glob(os.path.join(data_dir, "*.csv")))
         if not files:
             return None
-        # Parse straight from the filename (telemetry_buffer_YYYYMMDD_HHMMSS.csv)
-        # rather than opening the file -- cheap, and precise enough for this.
         fname = os.path.basename(files[-1])
         try:
             ts_str = fname.replace("telemetry_buffer_", "").replace(".csv", "")
@@ -192,9 +190,7 @@ def build_event_options(pred: np.ndarray, sc: np.ndarray, x, min_row: int = 0,
             continue
         candidates.append((s, e, peak_idx, float(sc[peak_idx])))
 
-    # Fallback: if every flagged region is shorter than min_duration (e.g. a
-    # model that only ever fires single-second blips), don't hide everything
-    # - just drop the duration filter rather than showing an empty list.
+
     if not candidates:
         for s, e in _regions(pred):
             peak_offset = int(np.argmax(sc[s:e])) if e > s else 0
@@ -260,8 +256,6 @@ def shade(fig, pred: np.ndarray, color: str, row=None, col=None, x=None):
     
     border_color = color
     if color.startswith("rgba("):
-        # Use a fully-opaque version of the same color for the border, so the
-        # outline reads clearly even if the fill itself is intentionally subtle.
         parts = color[color.index("(")+1:color.index(")")].split(",")
         border_color = f"rgba({parts[0]},{parts[1]},{parts[2]},0.9)"
     kw = dict(fillcolor=color, line=dict(color=border_color, width=1), layer="above")
@@ -316,8 +310,7 @@ with tab_cfg:
     st.caption("Configure and click **Run Analysis**.")
     st.divider()
 
-    # ── AUTO-RUN ── (placed first: how many files/chunks get loaded below
-    # scales with this, so it needs to be known before that UI renders)
+    # ── AUTO-RUN ──
     st.subheader("Automatic Analysis")
     
     if not AUTOREFRESH_AVAILABLE:
@@ -389,7 +382,7 @@ with tab_cfg:
             else:
                 n_files = st.slider("Chunks to load (most recent)", 1, 50, 10,
                                      help="Each Kafka message = one 300-row chunk, same "
-                                          "granularity as a CSV file.")
+                                          "type as a CSV file.")
             data_dir = None
             st.caption("Fetched fresh from the topic on each run.")
 
@@ -414,9 +407,7 @@ with tab_cfg:
             st.warning(f"No trained models in `{model_dir}`. Run `python scripts/train.py` first.")
 
         if st.button("Force-reload models from disk",
-                     help="Retrained recently and results still look stale? Click this. "
-                          "Model bundles are normally reloaded automatically when the files "
-                          "on disk change, but this clears the cache manually as a safety net."):
+                     help="Retrained recently and results still look stale, you should click this."):
             st.cache_resource.clear()
             st.success("Model cache cleared - next Run will load fresh from disk.")
 
@@ -524,11 +515,7 @@ with tab_cfg:
                 help="Adds a 'Confirmed' detector: fires when StatDetector is "
                      "strongly elevated alone, OR weakly elevated and backed by "
                      "at least one forecaster, OR when at least 2 forecasters "
-                     "agree regardless of StatDetector. The last path matters: "
-                     "StatDetector and the forecasters catch different anomaly "
-                     "shapes (StatDetector is essential for frozen sensors, "
-                     "forecasters are independently reliable on spikes and "
-                     "contextual breaks), so neither should gate the other.",
+                     "agree regardless of StatDetector.",
             )
         with ccol2:
             if use_smart_consensus:
@@ -1013,19 +1000,12 @@ with tab_results:
                             reason_code = int(reason_arr[idx_c])
                             reason_text = {
                                 1: "**StatDetector alone was strongly elevated** - confident "
-                                   "enough on its own, no forecaster backup needed. This path "
-                                   "typically catches frozen sensors and stuck-binary events "
-                                   "that forecasters structurally can't see.",
+                                   "enough on its own, no other forecaster backup needed.",
                                 2: "**StatDetector was only mildly elevated** - not enough to "
                                    "confirm alone - **but at least one forecaster independently "
-                                   "agreed**, which was enough to promote it to confirmed. This "
-                                   "is the most permissive of the three paths: it only needs "
-                                   "ONE forecaster, not two, as long as StatDetector shows even "
-                                   "a mild signal at the same moment.",
+                                   "agreed**, which was enough to set it to confirmed.",
                                 3: "**Two or more forecasters agreed independently**, regardless "
-                                   "of what StatDetector showed. This path exists because "
-                                   "forecasters are reliable on their own for spike/contextual "
-                                   "anomalies - it doesn't require StatDetector's permission.",
+                                   "of what StatDetector showed.",
                                 0: "No specific reason recorded for this exact point (it may sit "
                                    "at the edge of a confirmed region due to smoothing).",
                             }.get(reason_code, "Unknown.")
@@ -1087,7 +1067,7 @@ with tab_results:
                                     else "which nudged the model's guess lower"
                                 st.markdown(f"**{ordinals[i]}** {rsn['text']}, {nudge}.")
 
-                            with st.expander("Technical details (for the curious)"):
+                            with st.expander("Technical details"):
                                 feat_names = [f for f, _ in result["top_features"]]
                                 feat_vals  = [v for _, v in result["top_features"]]
                                 colors_bar = ["#15803D" if v > 0 else "#B91C1C" for v in feat_vals]
@@ -1111,7 +1091,7 @@ with tab_results:
                     st.markdown("**Why was this flagged?**")
 
                     try:
-                        import captum  # noqa: F401  (import check only, used inside explain.py)
+                        import captum
                         captum_available = True
                     except ImportError:
                         captum_available = False
@@ -1154,10 +1134,10 @@ with tab_results:
                                 confidence_ok = abs(cresult["convergence_delta"]) < 0.5
                                 if not confidence_ok:
                                     st.caption("Note: this explanation is a rougher estimate than "
-                                              "usual for this particular moment - treat it as a "
-                                              "general guide rather than an exact breakdown.")
+                                              "usual for this particular moment - consider it a"
+                                              "general guide rather than an exact explanation.")
 
-                                with st.expander("Technical details (for the curious)"):
+                                with st.expander("Technical details"):
                                     attr = cresult["attribution"]
                                     seconds_ago = list(range(cresult["window"], 0, -1))
                                     fig_captum = go.Figure(go.Heatmap(
